@@ -1,25 +1,123 @@
-name: Build APK
-on: workflow_dispatch
+name: Build
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'assets/**', 'index.html']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  apk:
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: 20}
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: 17}
-      - run: |
-          mkdir www && cp index.html www/
-          npm init -y
-          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npm i -D @capacitor/assets
-          npx cap init "FNF-COMPILER" com.ports.fnfcompiler --web-dir www
-          npx cap add android
-          npx capacitor-assets generate --android
-          npx cap sync android
-          cd android && ./gradlew assembleDebug
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: ./gradlew :composeApp:desktopTest
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: composeApp/build/reports/tests/desktopTest
+
+  android:
+    name: Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 17}
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: ./gradlew :composeApp:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: FnfCompiler-android-apk
+          path: composeApp/build/outputs/apk/release/*.apk
+
+  desktop:
+    name: Desktop ${{ matrix.name }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact: FnfCompiler-windows
+            path: |
+              composeApp/build/compose/binaries/main/msi/*.msi
+              composeApp/build/compose/binaries/main/exe/*.exe
+          - os: macos-latest
+            name: macOS
+            artifact: FnfCompiler-macos
+            path: composeApp/build/compose/binaries/main/dmg/*.dmg
+          - os: ubuntu-latest
+            name: Linux
+            artifact: FnfCompiler-linux
+            path: composeApp/build/compose/binaries/main/deb/*.deb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 17}
+      - uses: gradle/actions/setup-gradle@v4
+      - if: runner.os != 'Windows'
+        run: chmod +x gradlew
+      - run: ./gradlew :composeApp:packageDistributionForCurrentOS
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+
+  ios:
+    name: iOS IPA
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 17}
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: brew install xcodegen
+      - name: Build IPA
+        working-directory: iosApp
+        run: |
+          xcodegen generate
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Release -sdk iphoneos \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/FnfCompiler.app Payload/
+          zip -qry FnfCompiler.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FnfCompiler-ios-ipa
+          path: iosApp/FnfCompiler.ipa
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, desktop, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: FnfCompiler-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

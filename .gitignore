@@ -1,0 +1,15 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+*.hprof
+node_modules/
+android/
+www/
+iosApp/iosApp.xcodeproj/
+xcuserdata/
+.DS_Store
+iosApp/iosApp/Info.plist

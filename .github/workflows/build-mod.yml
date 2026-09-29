@@ -1,0 +1,118 @@
+name: Build Mod
+run-name: Build ${{ inputs.target }} ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag that holds mod.zip
+        required: true
+        type: string
+      target:
+        description: Platform to build
+        required: true
+        default: android
+        type: choice
+        options: [android, ios, windows, macos, linux]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ inputs.target == 'windows' && 'windows-latest' || (inputs.target == 'macos' || inputs.target == 'ios') && 'macos-latest' || 'ubuntu-latest' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: Download and remove the archive
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern mod.zip --dir .
+          gh release delete-asset "$TAG" mod.zip --repo "$GITHUB_REPOSITORY" --yes
+          mkdir mod
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z x mod.zip -omod -y > /dev/null; else unzip -q mod.zip -d mod; fi
+          XML=$(find mod -name Project.xml | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+          test -n "$XML"
+          echo "MOD_DIR=$(cd "$(dirname "$XML")" && pwd)" >> "$GITHUB_ENV"
+
+      - name: Patch Project.xml
+        run: |
+          cd "$MOD_DIR"
+          patch_xml() {
+            INSERT="$1" perl -0pi -e 's#</project>#$ENV{INSERT}\n</project>#i' Project.xml
+          }
+          if [ "$TARGET" = "android" ] && ! grep -q "target-sdk-version" Project.xml; then
+            patch_xml "$(printf '\t<android target-sdk-version="29" minimum-sdk-version="21" />\n\t<config:android permission="android.permission.WRITE_EXTERNAL_STORAGE" />\n\t<config:android permission="android.permission.READ_EXTERNAL_STORAGE" />')"
+          fi
+          if [ "$TARGET" = "ios" ] && ! grep -Eq "<ios[[:space:]]" Project.xml; then
+            patch_xml "$(printf '\t<ios deployment="12.0" />')"
+          fi
+
+      - uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: 4.2.5
+
+      - if: inputs.target == 'android'
+        uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: 11}
+
+      - if: inputs.target == 'android'
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r15c
+
+      - name: Install dependencies
+        run: |
+          haxelib setup ~/haxelib
+          haxelib install hmm
+          cd "$MOD_DIR"
+          haxelib run hmm install
+          haxelib run lime setup -y
+          if [ "$TARGET" = "android" ]; then
+            haxelib run lime config ANDROID_SDK "$ANDROID_HOME"
+            haxelib run lime config ANDROID_NDK_ROOT "${{ steps.ndk.outputs.ndk-path }}"
+            haxelib run lime config JAVA_HOME "$JAVA_HOME"
+            haxelib run lime config ANDROID_SETUP true
+          fi
+
+      - name: Build
+        run: |
+          cd "$MOD_DIR"
+          EXTRA=""
+          if [ "$TARGET" = "ios" ]; then EXTRA="-nosign"; fi
+          haxelib run lime build "$TARGET" -final $EXTRA 2>&1 | tee build.log
+
+      - name: Package
+        run: |
+          OUT="$GITHUB_WORKSPACE/out"
+          mkdir -p "$OUT"
+          cd "$MOD_DIR"
+          case "$TARGET" in
+            android)
+              cp "$(find export/release/android -name '*.apk' | head -1)" "$OUT/result-android.apk"
+              ;;
+            ios)
+              mkdir Payload
+              cp -R "$(find export/release/ios -name '*.app' -type d | head -1)" Payload/
+              zip -qry "$OUT/result-ios.ipa" Payload
+              ;;
+            *)
+              cd "export/release/$TARGET/bin"
+              if [ "$RUNNER_OS" = "Windows" ]; then 7z a -tzip "$OUT/result-$TARGET.zip" ./* > /dev/null; else zip -qry "$OUT/result-$TARGET.zip" .; fi
+              ;;
+          esac
+
+      - name: Publish result
+        run: gh release upload "$TAG" out/result-* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ inputs.target }}
+          path: ${{ env.MOD_DIR }}/build.log
+          if-no-files-found: ignore
