@@ -285,11 +285,14 @@ const gh = (path, opt, token) => fetch(GH + path, Object.assign({}, opt, {header
   "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Authorization": "Bearer " + token}}));
 const term = $("term");
 function log(t){ term.textContent += "[" + new Date().toLocaleTimeString("pt-BR") + "] " + t + "\n"; term.scrollTop = term.scrollHeight; }
-function explain(r){
-  if (r.status === 401 || r.status === 403) return "Token recusado ou sem permissão. Ele precisa de Actions: Read and write neste repositório.";
-  if (r.status === 404) return "Repositório ou workflow não encontrado. Confira o nome, o arquivo em .github/workflows e a branch.";
-  if (r.status === 422) return "A workflow não aceita disparo manual. Adicione workflow_dispatch em 'on:'.";
-  return "O GitHub respondeu com erro " + r.status + ".";
+async function explain(r){
+  let m = "";
+  try { m = (await r.clone().json()).message || ""; } catch (e) {}
+  let t = "O GitHub respondeu com erro " + r.status + ".";
+  if (r.status === 401 || r.status === 403) t = "Token recusado ou sem permissão. Ele precisa de Contents e Actions em Read and write neste repositório.";
+  if (r.status === 404) t = "Repositório ou workflow não encontrado. Confira o nome, o arquivo build-mod.yml em .github/workflows e a branch.";
+  if (r.status === 422) t = "O GitHub recusou o pedido. Confira a branch e se a workflow tem workflow_dispatch.";
+  return t + " [GitHub " + r.status + (m ? ": " + m : "") + "]";
 }
 let modFile = null;
 const mb = n => (n / 1048576).toFixed(1) + " MB";
@@ -336,7 +339,7 @@ async function compile(){
     log("Criando o pacote " + tag + "...");
     let r = await gh("/repos/" + c.repo + "/releases", {method: "POST",
       body: JSON.stringify({tag_name: tag, name: tag, prerelease: true, target_commitish: c.ref})}, c.token);
-    if (r.status !== 201) { log(explain(r)); return; }
+    if (r.status !== 201) { log(await explain(r)); return; }
     const rel = await r.json();
     log("Enviando " + modFile.name + " (" + mb(modFile.size) + "). Não feche o app...");
     r = await fetch("https://uploads.github.com/repos/" + c.repo + "/releases/" + rel.id + "/assets?name=mod.zip", {
@@ -347,7 +350,7 @@ async function compile(){
     const t0 = Date.now();
     r = await gh("/repos/" + c.repo + "/actions/workflows/build-mod.yml/dispatches",
       {method: "POST", body: JSON.stringify({ref: c.ref, inputs: {tag: tag}})}, c.token);
-    if (r.status !== 204) { log(explain(r)); return; }
+    if (r.status !== 204) { log(await explain(r)); return; }
     let run = null;
     for (let i = 0; i < 15 && !run; i++) {
       await sleep(4000);
