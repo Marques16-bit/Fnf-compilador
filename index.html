@@ -54,6 +54,14 @@ ul.warns li{margin:6px 0;word-break:break-word}
 .ok-txt{color:var(--green);font-weight:700}
 :focus-visible{outline:3px solid var(--purple);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+h2{font:400 20px/1.1 Bungee,Impact,sans-serif;margin:0 0 8px}
+.fld{display:block;margin:10px 0 0;font-weight:700;font-size:14px}
+.fld input{display:block;width:100%;margin-top:4px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--code);color:var(--ink);font:15px Nunito,sans-serif}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.term{background:var(--code);color:var(--green);border:1px solid var(--line);border-radius:10px;padding:10px;margin:12px 0 0;height:220px;overflow:auto;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.btn[disabled]{opacity:.5}
+.btn.alt{background:var(--purple);color:#fff}
+#out a.btn{display:inline-block;text-decoration:none}
 </style>
 </head>
 <body>
@@ -93,6 +101,19 @@ ul.warns li{margin:6px 0;word-break:break-word}
       <div class="row"><button class="btn" data-copy="ta-xml">Copiar Project.xml</button><span class="hint" id="c-xml"></span></div>
     </div>
   </section>
+<section class="panel" id="compile" style="margin-top:22px">
+  <h2>Compilar</h2>
+  <p class="hint">O build roda no GitHub e o app mostra o andamento. Crie um token em GitHub → Settings → Developer settings → Fine-grained tokens, só para o repositório do mod, com Actions: Read and write. Ele fica salvo apenas neste aparelho.</p>
+  <label class="fld">Token do GitHub<input id="f-token" type="password" autocomplete="off" placeholder="github_pat_..."></label>
+  <label class="fld">Repositório do mod (dono/repo)<input id="f-repo" placeholder="Marques16-bit/Grandpa-Death-source"></label>
+  <div class="two">
+    <label class="fld">Arquivo da workflow<input id="f-wf" placeholder="android.yml"></label>
+    <label class="fld">Branch<input id="f-ref" placeholder="main"></label>
+  </div>
+  <div class="row"><button class="btn" id="go">Compilar</button><span class="hint">A workflow precisa ter workflow_dispatch (a que o app gera já tem).</span></div>
+  <pre class="term" id="term" aria-live="polite"></pre>
+  <div class="row" id="out"></div>
+</section>
 </main>
 
 <script>
@@ -256,6 +277,114 @@ document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click"
     catch (e2) { msg.textContent = "Selecione o texto e copie manualmente."; }
   }
 }));
+const GH = "https://api.github.com";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const LBL = {in_progress:"em andamento", success:"ok", failure:"FALHOU", skipped:"pulado", cancelled:"cancelado", completed:"concluído"};
+const cfgLoad = () => { try { return JSON.parse(localStorage.getItem("fnfcfg") || "{}"); } catch (e) { return {}; } };
+const cfgSave = o => { try { localStorage.setItem("fnfcfg", JSON.stringify(o)); } catch (e) {} };
+const gh = (path, opt, token) => fetch(GH + path, Object.assign({}, opt, {headers: {
+  "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Authorization": "Bearer " + token}}));
+const term = $("term");
+function log(t){ term.textContent += "[" + new Date().toLocaleTimeString("pt-BR") + "] " + t + "\n"; term.scrollTop = term.scrollHeight; }
+function explain(r){
+  if (r.status === 401 || r.status === 403) return "Token recusado ou sem permissão. Ele precisa de Actions: Read and write neste repositório.";
+  if (r.status === 404) return "Repositório ou workflow não encontrado. Confira o nome, o arquivo em .github/workflows e a branch.";
+  if (r.status === 422) return "A workflow não aceita disparo manual. Adicione workflow_dispatch em 'on:'.";
+  return "O GitHub respondeu com erro " + r.status + ".";
+}
+async function downloadArtifact(c, art){
+  log("Baixando " + art.name + "...");
+  try {
+    const r = await gh("/repos/" + c.repo + "/actions/artifacts/" + art.id + "/zip", {}, c.token);
+    if (!r.ok) throw new Error("http");
+    const z = await JSZip.loadAsync(await r.arrayBuffer());
+    const names = Object.keys(z.files).filter(n => !z.files[n].dir);
+    const n = names.find(x => x.endsWith(".apk")) || names[0];
+    const blob = await z.files[n].async("blob");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = n.split("/").pop();
+    document.body.appendChild(a); a.click(); a.remove();
+    log("Arquivo pronto: " + a.download);
+  } catch (e) { log("Não foi possível baixar aqui. Use o botão da página do build."); }
+}
+async function showResult(c, run){
+  const out = $("out"); out.textContent = "";
+  const page = document.createElement("a");
+  page.className = "btn alt"; page.href = run.html_url; page.target = "_blank"; page.rel = "noopener"; page.textContent = "Abrir página do build";
+  out.appendChild(page);
+  if (run.conclusion === "success") {
+    log("Build concluído com sucesso.");
+    try {
+      const r = await gh("/repos/" + c.repo + "/actions/runs/" + run.id + "/artifacts", {}, c.token);
+      const d = r.ok ? await r.json() : {artifacts: []};
+      (d.artifacts || []).filter(a => !a.expired).forEach(a => {
+        const b = document.createElement("button");
+        b.className = "btn"; b.textContent = "Baixar " + a.name;
+        b.addEventListener("click", () => downloadArtifact(c, a));
+        out.appendChild(b);
+      });
+    } catch (e) { log("Não consegui listar os arquivos do build."); }
+  } else {
+    log("O build terminou como: " + (LBL[run.conclusion] || run.conclusion) + ".");
+    try {
+      const jr = await gh("/repos/" + c.repo + "/actions/runs/" + run.id + "/jobs", {}, c.token);
+      const job = ((await jr.json()).jobs || []).find(j => j.conclusion === "failure");
+      if (job) {
+        const lr = await gh("/repos/" + c.repo + "/actions/jobs/" + job.id + "/logs", {}, c.token);
+        if (lr.ok) { log("Final do log:\n" + (await lr.text()).split("\n").slice(-40).join("\n")); }
+        else log("Abra a página do build para ver o log completo.");
+      }
+    } catch (e) { log("Abra a página do build para ver o log completo."); }
+  }
+}
+let busy = false;
+async function compile(){
+  if (busy) return;
+  const c = {token: $("f-token").value.trim(), repo: $("f-repo").value.trim(),
+    wf: $("f-wf").value.trim() || "android.yml", ref: $("f-ref").value.trim() || "main"};
+  term.textContent = ""; $("out").textContent = "";
+  if (!c.token || !/^[\w.-]+\/[\w.-]+$/.test(c.repo)) { log("Preencha o token e o repositório no formato dono/repo."); return; }
+  cfgSave(c); busy = true; $("go").disabled = true;
+  try {
+    const t0 = Date.now();
+    log("Enviando pedido de build para " + c.repo + "...");
+    let r = await gh("/repos/" + c.repo + "/actions/workflows/" + c.wf + "/dispatches",
+      {method: "POST", body: JSON.stringify({ref: c.ref})}, c.token);
+    if (r.status !== 204) { log(explain(r)); return; }
+    log("Pedido aceito. Aguardando o GitHub iniciar...");
+    let run = null;
+    for (let i = 0; i < 15 && !run; i++) {
+      await sleep(4000);
+      r = await gh("/repos/" + c.repo + "/actions/runs?event=workflow_dispatch&branch=" + encodeURIComponent(c.ref) + "&per_page=5", {}, c.token);
+      if (!r.ok) continue;
+      run = ((await r.json()).workflow_runs || []).find(x => new Date(x.created_at).getTime() >= t0 - 20000) || null;
+    }
+    if (!run) { log("O GitHub não iniciou o build a tempo. Veja a aba Actions do repositório."); return; }
+    log("Build #" + run.run_number + " iniciado.");
+    const seen = {};
+    for (;;) {
+      await sleep(6000);
+      r = await gh("/repos/" + c.repo + "/actions/runs/" + run.id, {}, c.token);
+      if (!r.ok) continue;
+      run = await r.json();
+      const jr = await gh("/repos/" + c.repo + "/actions/runs/" + run.id + "/jobs", {}, c.token);
+      if (jr.ok) ((await jr.json()).jobs || []).forEach(j => (j.steps || []).forEach(s => {
+        const k = j.id + ":" + s.number + ":" + s.status;
+        if (!seen[k] && s.status !== "queued") { seen[k] = 1; log(s.name + ": " + (LBL[s.conclusion || s.status] || s.status)); }
+      }));
+      if (run.status === "completed") break;
+    }
+    await showResult(c, run);
+  } catch (e) {
+    log("Erro de conexão. Verifique a internet e tente de novo.");
+  } finally { busy = false; $("go").disabled = false; }
+}
+(function initCompile(){
+  const c = cfgLoad();
+  $("f-token").value = c.token || ""; $("f-repo").value = c.repo || "";
+  $("f-wf").value = c.wf || ""; $("f-ref").value = c.ref || "";
+  $("go").addEventListener("click", compile);
+})();
 </script>
 </body>
 </html>
