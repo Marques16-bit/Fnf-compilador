@@ -8,7 +8,10 @@ plugins {
     alias(libs.plugins.composeCompiler)
 }
 
-val appVersion = "1.0.0"
+val appVersion = (findProperty("appVersion") as String?)?.takeIf { it.isNotBlank() } ?: "1.0.0"
+val appVersionCode = appVersion.split(".").map { it.toIntOrNull() ?: 0 }.let { parts ->
+    parts.getOrElse(0) { 0 } * 10000 + parts.getOrElse(1) { 0 } * 100 + parts.getOrElse(2) { 0 }
+}
 
 kotlin {
     androidTarget {
@@ -72,7 +75,7 @@ android {
         applicationId = "com.ports.fnfcompiler"
         minSdk = libs.versions.androidMinSdk.get().toInt()
         targetSdk = libs.versions.androidTargetSdk.get().toInt()
-        versionCode = 1
+        versionCode = appVersionCode
         versionName = appVersion
     }
 

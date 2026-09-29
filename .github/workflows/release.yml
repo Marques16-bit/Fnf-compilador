@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the v prefix, for example 1.0.0
+        required: true
+        type: string
+      prerelease:
+        description: Mark the release as a pre-release
+        required: false
+        default: false
+        type: boolean
+      notes:
+        description: Release notes, empty generates them from the commits
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version format and tag
+        run: |
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Version must look like 1.2.3, got: $VERSION"
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
+            echo "Tag v$VERSION already exists"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: validate
+    uses: ./.github/workflows/Build.yml
+    with:
+      version: ${{ inputs.version }}
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      NOTES: ${{ inputs.notes }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: FnfCompiler-*
+          merge-multiple: true
+      - name: Rename files with the version
+        run: |
+          cd dist
+          for file in *; do
+            case "$file" in
+              *.apk) mv "$file" "FnfCompiler-$VERSION-android.apk" ;;
+              *.ipa) mv "$file" "FnfCompiler-$VERSION-ios.ipa" ;;
+              *.msi) mv "$file" "FnfCompiler-$VERSION-windows.msi" ;;
+              *.exe) mv "$file" "FnfCompiler-$VERSION-windows.exe" ;;
+              *.dmg) mv "$file" "FnfCompiler-$VERSION-macos.dmg" ;;
+              *.deb) mv "$file" "FnfCompiler-$VERSION-linux.deb" ;;
+            esac
+          done
+          ls -la
+      - name: Create the release
+        run: |
+          ARGS=(dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "FNF Compiler v$VERSION")
+          if [ "$PRERELEASE" = "true" ]; then ARGS+=(--prerelease); fi
+          if [ -n "$NOTES" ]; then
+            printf "%s" "$NOTES" > notes.md
+            ARGS+=(--notes-file notes.md)
+          else
+            ARGS+=(--generate-notes)
+          fi
+          gh release create "v$VERSION" "${ARGS[@]}"
