@@ -4,6 +4,8 @@ import com.ports.fnfcompiler.core.Analyzer
 import com.ports.fnfcompiler.core.ArchiveException
 import com.ports.fnfcompiler.core.BuildTarget
 import com.ports.fnfcompiler.core.ZipArchive
+import com.ports.fnfcompiler.core.ZipSource
+import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.test.Test
@@ -53,8 +55,8 @@ class ModArchiveTest {
     }
 
     @Test
-    fun analyzesMobileTarget() {
-        val result = Analyzer.analyze(fixture, BuildTarget.ANDROID)
+    fun analyzesMobileTarget() = runTest {
+        val result = Analyzer.analyze(ZipSource("mod.zip", fixture), BuildTarget.ANDROID)
         assertTrue(result.hasProject)
         assertEquals("Psych Engine", result.engine.label)
         assertFalse(result.libs.ok)
@@ -65,8 +67,8 @@ class ModArchiveTest {
     }
 
     @Test
-    fun ignoresMobileRulesOnDesktop() {
-        val result = Analyzer.analyze(fixture, BuildTarget.WINDOWS)
+    fun ignoresMobileRulesOnDesktop() = runTest {
+        val result = Analyzer.analyze(ZipSource("mod.zip", fixture), BuildTarget.WINDOWS)
         assertTrue(result.code.ok)
         assertEquals("No change", result.project.label)
     }

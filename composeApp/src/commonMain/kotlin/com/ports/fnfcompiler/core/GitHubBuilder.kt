@@ -36,6 +36,11 @@ data class BuildOutcome(
 
 class BuildException(message: String) : Exception(message)
 
+sealed interface BuildSource {
+    data class Archive(val name: String, val bytes: ByteArray) : BuildSource
+    data class Repository(val repo: String, val ref: String) : BuildSource
+}
+
 class GitHubBuilder(
     private val config: BuildConfig,
     private val log: (String) -> Unit
@@ -51,7 +56,7 @@ class GitHubBuilder(
 
     fun close() = client.close()
 
-    suspend fun build(zip: ByteArray, fileName: String, target: BuildTarget): BuildOutcome {
+    suspend fun build(source: BuildSource, target: BuildTarget, profile: BuildProfile): BuildOutcome {
         val tag = "mod-" + Random.nextLong().toULong().toString(16)
         log("Creating package $tag")
         var response = api(HttpMethod.Post, "/repos/${config.repo}/releases", buildJsonObject {
@@ -63,14 +68,18 @@ class GitHubBuilder(
         if (response.status.value != 201) throw BuildException(explain(response))
         val releaseId = json(response).obj().long("id") ?: throw BuildException("GitHub returned an invalid release")
 
-        log("Uploading $fileName (${megabytes(zip.size.toLong())}). Keep the app open")
-        response = client.request("https://uploads.github.com/repos/${config.repo}/releases/$releaseId/assets?name=mod.zip") {
-            method = HttpMethod.Post
-            authorize()
-            contentType(ContentType.Application.Zip)
-            setBody(zip)
+        if (source is BuildSource.Archive) {
+            log("Uploading ${source.name} (${megabytes(source.bytes.size.toLong())}). Keep the app open")
+            response = client.request("https://uploads.github.com/repos/${config.repo}/releases/$releaseId/assets?name=mod.zip") {
+                method = HttpMethod.Post
+                authorize()
+                contentType(ContentType.Application.Zip)
+                setBody(source.bytes)
+            }
+            if (response.status.value !in 200..299) throw BuildException("Upload failed with status ${response.status.value}")
+        } else if (source is BuildSource.Repository) {
+            log("Source: ${source.repo} at ${source.ref}")
         }
-        if (response.status.value !in 200..299) throw BuildException("Upload failed with status ${response.status.value}")
 
         log("Starting the ${target.label} build")
         response = api(HttpMethod.Post, "/repos/${config.repo}/actions/workflows/build-mod.yml/dispatches", buildJsonObject {
@@ -78,6 +87,11 @@ class GitHubBuilder(
             put("inputs", buildJsonObject {
                 put("tag", tag)
                 put("target", target.id)
+                put("source_repo", (source as? BuildSource.Repository)?.repo ?: "")
+                put("source_ref", (source as? BuildSource.Repository)?.ref ?: "")
+                put("haxe_version", profile.haxe)
+                put("defines", profile.defines.joinToString(" "))
+                put("toolchain", if (profile.modern) "modern" else "legacy")
             })
         }.toString())
         if (response.status.value != 204) throw BuildException(explain(response))

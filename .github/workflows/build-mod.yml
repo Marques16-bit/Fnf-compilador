@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag that holds mod.zip
+        description: Release tag that receives the result and optionally holds mod.zip
         required: true
         type: string
       target:
@@ -14,13 +14,39 @@ on:
         default: android
         type: choice
         options: [android, ios, windows, macos, linux]
+      source_repo:
+        description: Public GitHub repository to build instead of mod.zip, as owner/name
+        required: false
+        default: ''
+        type: string
+      source_ref:
+        description: Branch or tag of the repository
+        required: false
+        default: ''
+        type: string
+      haxe_version:
+        description: Haxe version
+        required: false
+        default: 4.3.4
+        type: string
+      defines:
+        description: Extra Haxe defines separated by spaces
+        required: false
+        default: ''
+        type: string
+      toolchain:
+        description: Android toolchain generation
+        required: false
+        default: modern
+        type: choice
+        options: [modern, legacy]
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: ${{ inputs.target == 'windows' && 'windows-latest' || (inputs.target == 'macos' || inputs.target == 'ios') && 'macos-latest' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.target == 'windows' && 'windows-latest' || (inputs.target == 'macos' || inputs.target == 'ios') && 'macos-15' || 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash
@@ -28,14 +54,25 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag }}
       TARGET: ${{ inputs.target }}
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      DEFINES: ${{ inputs.defines }}
     steps:
-      - name: Download and remove the archive
+      - name: Get the source
         run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern mod.zip --dir .
-          gh release delete-asset "$TAG" mod.zip --repo "$GITHUB_REPOSITORY" --yes
-          mkdir mod
-          if [ "$RUNNER_OS" = "Windows" ]; then 7z x mod.zip -omod -y > /dev/null; else unzip -q mod.zip -d mod; fi
-          XML=$(find mod -name Project.xml | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+          if [ -n "$SOURCE_REPO" ]; then
+            if [ -n "$SOURCE_REF" ]; then
+              git clone --depth 1 --branch "$SOURCE_REF" "https://github.com/$SOURCE_REPO.git" mod
+            else
+              git clone --depth 1 "https://github.com/$SOURCE_REPO.git" mod
+            fi
+          else
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern mod.zip --dir .
+            gh release delete-asset "$TAG" mod.zip --repo "$GITHUB_REPOSITORY" --yes
+            mkdir mod
+            if [ "$RUNNER_OS" = "Windows" ]; then 7z x mod.zip -omod -y > /dev/null; else unzip -q mod.zip -d mod; fi
+          fi
+          XML=$(find mod -name Project.xml -not -path '*/.git/*' | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
           test -n "$XML"
           echo "MOD_DIR=$(cd "$(dirname "$XML")" && pwd)" >> "$GITHUB_ENV"
 
@@ -45,6 +82,9 @@ jobs:
           patch_xml() {
             INSERT="$1" perl -0pi -e 's#</project>#$ENV{INSERT}\n</project>#i' Project.xml
           }
+          if [ "$TARGET" = "android" ] || [ "$TARGET" = "ios" ]; then
+            perl -0pi -e 's#(<define\s+name="DISCORD_ALLOWED"\s*)/>#$1unless="mobile" />#g' Project.xml
+          fi
           if [ "$TARGET" = "android" ] && ! grep -q "target-sdk-version" Project.xml; then
             patch_xml "$(printf '\t<android target-sdk-version="29" minimum-sdk-version="21" />\n\t<config:android permission="android.permission.WRITE_EXTERNAL_STORAGE" />\n\t<config:android permission="android.permission.READ_EXTERNAL_STORAGE" />')"
           fi
@@ -54,24 +94,55 @@ jobs:
 
       - uses: krdlab/setup-haxe@v1
         with:
-          haxe-version: 4.2.5
+          haxe-version: ${{ inputs.haxe_version }}
 
       - if: inputs.target == 'android'
         uses: actions/setup-java@v4
-        with: {distribution: temurin, java-version: 11}
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.toolchain == 'modern' && '17' || '11' }}
+
+      - if: inputs.target == 'android'
+        uses: android-actions/setup-android@v3
 
       - if: inputs.target == 'android'
         uses: nttld/setup-ndk@v1
         id: ndk
         with:
-          ndk-version: r15c
+          ndk-version: ${{ inputs.toolchain == 'modern' && 'r21e' || 'r15c' }}
+
+      - if: inputs.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libvlc-dev libvlccore-dev
 
       - name: Install dependencies
         run: |
           haxelib setup ~/haxelib
-          haxelib install hmm
+          haxelib install hxcpp
           cd "$MOD_DIR"
-          haxelib run hmm install
+          if [ -f hmm.json ]; then
+            haxelib install hmm
+            haxelib run hmm install
+          elif [ -f setup/unix.sh ] || [ -f setup/windows.bat ]; then
+            SAFE='^haxelib (install|git|set) [A-Za-z0-9._@:/ =+-]+$'
+            for script in setup/unix.sh setup/windows.bat; do
+              if [ -f "$script" ]; then
+                tr -d '\r' < "$script" | grep -E "$SAFE" | grep -v -E '^haxelib set ' | while read -r line; do
+                  echo "> $line"
+                  $line < /dev/null || echo "Command failed: $line"
+                done
+                break
+              fi
+            done
+            if [ -f setup/windows.bat ]; then
+              tr -d '\r' < setup/windows.bat | grep -E '^haxelib set [A-Za-z0-9._-]+ [A-Za-z0-9._-]+$' | while read -r line; do
+                $line < /dev/null || true
+              done
+            fi
+          else
+            grep -oE '<haxelib name="[^"]+"( version="[^"]+")?' Project.xml | sed -E 's/<haxelib name="([^"]+)"( version="([^"]+)")?/\1 \3/' | sort -u | while read -r name version; do
+              haxelib install "$name" $version < /dev/null || echo "Could not install $name"
+            done
+          fi
           haxelib run lime setup -y
           if [ "$TARGET" = "android" ]; then
             haxelib run lime config ANDROID_SDK "$ANDROID_HOME"
@@ -79,13 +150,17 @@ jobs:
             haxelib run lime config JAVA_HOME "$JAVA_HOME"
             haxelib run lime config ANDROID_SETUP true
           fi
+          haxelib list
 
       - name: Build
         run: |
           cd "$MOD_DIR"
-          EXTRA=""
-          if [ "$TARGET" = "ios" ]; then EXTRA="-nosign"; fi
-          haxelib run lime build "$TARGET" -final $EXTRA 2>&1 | tee build.log
+          LIME_TARGET="$TARGET"
+          if [ "$TARGET" = "macos" ]; then LIME_TARGET="mac"; fi
+          FLAGS="-final"
+          if [ "$TARGET" = "ios" ]; then FLAGS="$FLAGS -nosign"; fi
+          for define in $DEFINES; do FLAGS="$FLAGS -D $define"; done
+          haxelib run lime build "$LIME_TARGET" $FLAGS 2>&1 | tee build.log
 
       - name: Package
         run: |
@@ -94,11 +169,23 @@ jobs:
           cd "$MOD_DIR"
           case "$TARGET" in
             android)
-              cp "$(find export/release/android -name '*.apk' | head -1)" "$OUT/result-android.apk"
+              APK=$(find export/release/android -name '*.apk' | head -1)
+              test -n "$APK"
+              if echo "$APK" | grep -q unsigned; then
+                BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+                keytool -genkeypair -keystore signing.jks -alias key -storepass android -keypass android -dname "CN=FNF Compiler" -keyalg RSA -keysize 2048 -validity 10000
+                "$BT/zipalign" -f 4 "$APK" aligned.apk
+                "$BT/apksigner" sign --ks signing.jks --ks-pass pass:android --key-pass pass:android --out "$OUT/result-android.apk" aligned.apk
+              else
+                cp "$APK" "$OUT/result-android.apk"
+              fi
               ;;
             ios)
+              APP=$(find export/release/ios -path '*iphoneos*' -name '*.app' -type d | head -1)
+              if [ -z "$APP" ]; then APP=$(find export/release/ios -name '*.app' -type d | head -1); fi
+              test -n "$APP"
               mkdir Payload
-              cp -R "$(find export/release/ios -name '*.app' -type d | head -1)" Payload/
+              cp -R "$APP" Payload/
               zip -qry "$OUT/result-ios.ipa" Payload
               ;;
             *)

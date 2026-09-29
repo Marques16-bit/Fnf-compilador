@@ -50,9 +50,15 @@ import com.ports.fnfcompiler.core.Analysis
 import com.ports.fnfcompiler.core.Analyzer
 import com.ports.fnfcompiler.core.BuildConfig
 import com.ports.fnfcompiler.core.BuildOutcome
+import com.ports.fnfcompiler.core.BuildProfile
+import com.ports.fnfcompiler.core.BuildSource
 import com.ports.fnfcompiler.core.BuildTarget
 import com.ports.fnfcompiler.core.GitHubBuilder
+import com.ports.fnfcompiler.core.RepoRef
+import com.ports.fnfcompiler.core.RepoSource
 import com.ports.fnfcompiler.core.SettingsStore
+import com.ports.fnfcompiler.core.SourceFiles
+import com.ports.fnfcompiler.core.ZipSource
 import io.github.vinceglb.filekit.compose.rememberFilePickerLauncher
 import io.github.vinceglb.filekit.core.PickerMode
 import io.github.vinceglb.filekit.core.PickerType
@@ -62,8 +68,6 @@ import kotlinx.coroutines.withContext
 
 private const val DEFAULT_REPO = "Marques16-bit/Fnf-compilador"
 private const val DEFAULT_BRANCH = "main"
-
-private class PickedZip(val name: String, val bytes: ByteArray)
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -76,7 +80,9 @@ fun App() {
             val saved = remember { store.load() }
 
             var target by remember { mutableStateOf(store.loadTarget()) }
-            var zip by remember { mutableStateOf<PickedZip?>(null) }
+            var source by remember { mutableStateOf<SourceFiles?>(null) }
+            var fromRepo by remember { mutableStateOf(false) }
+            var repoUrl by remember { mutableStateOf("https://github.com/ShadowMario/FNF-PsychEngine") }
             var analysis by remember { mutableStateOf<Analysis?>(null) }
             var status by remember { mutableStateOf("") }
             var token by remember { mutableStateOf(saved.token) }
@@ -96,9 +102,12 @@ fun App() {
                     scope.launch {
                         status = "Reading ${file.name}"
                         try {
-                            zip = PickedZip(file.name, file.readBytes())
+                            val bytes = file.readBytes()
+                            val loaded = withContext(Dispatchers.Default) { ZipSource(file.name, bytes) }
+                            (source as? RepoSource)?.close()
+                            source = loaded
                         } catch (e: Exception) {
-                            zip = null
+                            source = null
                             analysis = null
                             status = "Could not read the file: ${e.message}"
                         }
@@ -106,15 +115,15 @@ fun App() {
                 }
             }
 
-            LaunchedEffect(zip, target) {
-                val picked = zip ?: return@LaunchedEffect
+            LaunchedEffect(source, target) {
+                val loaded = source ?: return@LaunchedEffect
                 status = "Analyzing the project"
                 analysis = null
                 try {
-                    analysis = withContext(Dispatchers.Default) { Analyzer.analyze(picked.bytes, target) }
-                    status = if (analysis?.hasProject == true) "Analysis finished" else "Project.xml was not found in the archive"
+                    analysis = withContext(Dispatchers.Default) { Analyzer.analyze(loaded, target) }
+                    status = if (analysis?.hasProject == true) "Analysis finished" else "Project.xml was not found in the source"
                 } catch (e: Exception) {
-                    status = "Could not open the archive: ${e.message}"
+                    status = "Could not analyze the source: ${e.message}"
                 }
             }
 
@@ -129,7 +138,7 @@ fun App() {
                 ) {
                     Text("FNF COMPILER", fontSize = 30.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                     Text(
-                        "Pick the mod archive, choose a platform and the app builds it on GitHub Actions. The archive is removed from the release as soon as the build starts.",
+                        "Pick a mod ZIP or paste a GitHub repository URL, choose a platform and the app builds it on GitHub Actions. An uploaded archive is removed from the release as soon as the build starts.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
@@ -147,15 +156,60 @@ fun App() {
                         }
                     }
 
-                    OutlinedButton(
-                        onClick = { picker.launch() },
-                        enabled = !busy,
-                        modifier = Modifier.fillMaxWidth().height(72.dp),
-                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline)
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(zip?.name ?: "Choose the mod .zip", fontWeight = FontWeight.Bold)
-                            Text("It must contain Project.xml", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Source", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = fromRepo, onClick = { fromRepo = true }, label = { Text("GitHub URL") })
+                        FilterChip(selected = !fromRepo, onClick = { fromRepo = false }, label = { Text("ZIP file") })
+                    }
+                    if (fromRepo) {
+                        OutlinedTextField(
+                            value = repoUrl,
+                            onValueChange = { repoUrl = it },
+                            label = { Text("Repository URL") },
+                            placeholder = { Text("https://github.com/owner/repository") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            enabled = !busy,
+                            onClick = {
+                                val ref = RepoRef.parse(repoUrl)
+                                if (ref == null) {
+                                    status = "That is not a valid GitHub repository URL"
+                                } else {
+                                    scope.launch {
+                                        status = "Reading ${ref.slug}"
+                                        try {
+                                            val opened = RepoSource.open(ref, token)
+                                            (source as? RepoSource)?.close()
+                                            source = opened
+                                        } catch (e: Exception) {
+                                            source = null
+                                            analysis = null
+                                            status = e.message ?: "Could not read the repository"
+                                        }
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("Load repository")
+                        }
+                        Text(
+                            "Nothing is uploaded. The build downloads the public repository directly, which suits large sources such as Psych Engine.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = { picker.launch() },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(72.dp),
+                            border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text((source as? ZipSource)?.fileName ?: "Choose the mod .zip", fontWeight = FontWeight.Bold)
+                                Text("It must contain Project.xml. Sources above 200 MB should use the GitHub URL.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                     if (status.isNotEmpty()) Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -224,15 +278,15 @@ fun App() {
                                 Button(
                                     enabled = !busy,
                                     onClick = {
-                                        val picked = zip
+                                        val picked = source
                                         logLines.clear()
                                         outcome = null
                                         if (token.isBlank()) {
                                             logLines.add("Fill in the GitHub token")
                                         } else if (picked == null) {
-                                            logLines.add("Choose the mod .zip first")
+                                            logLines.add("Choose the mod source first")
                                         } else if (analysis?.hasProject != true) {
-                                            logLines.add("The archive needs a Project.xml before it can be built")
+                                            logLines.add("The source needs a Project.xml before it can be built")
                                         } else {
                                             val config = BuildConfig(
                                                 token.trim(),
@@ -244,7 +298,12 @@ fun App() {
                                             scope.launch {
                                                 val builder = GitHubBuilder(config) { logLines.add(it) }
                                                 try {
-                                                    outcome = builder.build(picked.bytes, picked.name, target)
+                                                    val buildSource = when (picked) {
+                                                        is RepoSource -> BuildSource.Repository(picked.slug, picked.ref)
+                                                        is ZipSource -> BuildSource.Archive(picked.fileName, picked.bytes)
+                                                        else -> throw IllegalStateException("Unsupported source")
+                                                    }
+                                                    outcome = builder.build(buildSource, target, analysis?.profile ?: BuildProfile.Legacy)
                                                 } catch (e: Exception) {
                                                     logLines.add(e.message ?: "The build could not be started. Check your connection and try again")
                                                 } finally {
