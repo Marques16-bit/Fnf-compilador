@@ -7,14 +7,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: {node-version: 20}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with: {distribution: temurin, java-version: 17}
       - run: |
           mkdir www && cp index.html www/
           npm init -y
           npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npx cap init "FNF Android" com.fnf.androidprep --web-dir www
+          npm i -D @capacitor/assets
+          npx cap init "FNF-COMPILER" com.doomports.app --web-dir www
           npx cap add android
+          npx capacitor-assets generate --android
           npx cap sync android
           cd android && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
