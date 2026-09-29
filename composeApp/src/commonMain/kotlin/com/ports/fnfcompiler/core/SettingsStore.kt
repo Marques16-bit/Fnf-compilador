@@ -19,7 +19,12 @@ class SettingsStore(private val settings: Settings = Settings()) {
 
     fun saveTarget(target: BuildTarget) = settings.putString(TARGET, target.id)
 
+    fun loadUrl(): String = settings.getString(URL, "")
+
+    fun saveUrl(url: String) = settings.putString(URL, url)
+
     private companion object {
+        const val URL = "url"
         const val TOKEN = "token"
         const val REPO = "repo"
         const val BRANCH = "branch"

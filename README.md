@@ -15,12 +15,12 @@ The compiler app itself runs on Android, iOS, Windows, macOS and Linux. There is
 ## How it works
 
 1. Pick the mod `.zip` or paste a public GitHub repository URL such as `https://github.com/ShadowMario/FNF-PsychEngine`. The app reads it, detects the engine, checks the dependency setup (`hmm.json` or `setup/unix.sh`) and scans the Haxe sources for code that breaks on mobile.
-2. Choose a platform and press Compile.
+2. Choose a platform and press Compile. With a token the whole flow is automatic: the app reads the source, builds it and opens the download when it is ready. Without a token GitHub cannot be triggered from the app, so it opens the workflow page and shows the exact values to enter, then checks the result on demand.
 3. For a ZIP the app uploads the archive to a release of the build repository. For a repository URL nothing is uploaded. It then dispatches `build-mod.yml`.
 4. The workflow gets the source, patches `Project.xml`, installs the libraries, builds with Lime, publishes `result-<platform>` to the release and deletes the uploaded archive.
 5. The app follows the run and offers the download link.
 
-The build repository must be public so the result can be downloaded, and the token needs `Contents` and `Actions` with read and write access.
+The build repository must be public so the result can be downloaded. The token is optional and needs `Contents` and `Actions` with read and write access when used.
 
 ## Psych Engine
 

@@ -56,8 +56,19 @@ class GitHubBuilder(
 
     fun close() = client.close()
 
-    suspend fun build(source: BuildSource, target: BuildTarget, profile: BuildProfile): BuildOutcome {
-        val tag = "mod-" + Random.nextLong().toULong().toString(16)
+    companion object {
+        fun newTag(): String = "mod-" + Random.nextLong().toULong().toString(16)
+    }
+
+    suspend fun lookup(tag: String): BuildOutcome? {
+        val release = api(HttpMethod.Get, "/repos/${config.repo}/releases/tags/$tag")
+        if (release.status.value != 200) return null
+        val asset = json(release).obj().array("assets").map { it.jsonObject }
+            .firstOrNull { it.text("name")?.startsWith("result-") == true } ?: return null
+        return BuildOutcome(true, null, asset.text("browser_download_url"), asset.text("name"), asset.long("size") ?: 0L)
+    }
+
+    suspend fun build(source: BuildSource, target: BuildTarget, profile: BuildProfile, tag: String = newTag()): BuildOutcome {
         log("Creating package $tag")
         var response = api(HttpMethod.Post, "/repos/${config.repo}/releases", buildJsonObject {
             put("tag_name", tag)
@@ -179,7 +190,7 @@ class GitHubBuilder(
     private fun io.ktor.client.request.HttpRequestBuilder.authorize() {
         header("Accept", "application/vnd.github+json")
         header("X-GitHub-Api-Version", "2022-11-28")
-        header("Authorization", "Bearer ${config.token}")
+        if (config.token.isNotBlank()) header("Authorization", "Bearer ${config.token}")
     }
 
     private suspend fun json(response: HttpResponse): JsonElement = Json.parseToJsonElement(response.bodyAsText())

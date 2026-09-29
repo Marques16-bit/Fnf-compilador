@@ -60,6 +60,7 @@ jobs:
     steps:
       - name: Get the source
         run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --title "$TAG" --notes ""
           if [ -n "$SOURCE_REPO" ]; then
             if [ -n "$SOURCE_REF" ]; then
               git clone --depth 1 --branch "$SOURCE_REF" "https://github.com/$SOURCE_REPO.git" mod
