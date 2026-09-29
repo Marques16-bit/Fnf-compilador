@@ -110,8 +110,9 @@ private fun HomeScreen(model: CompilerModel) {
                         enabled = !model.busy,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    TextButton(onClick = { model.repoUrl = EXAMPLE_URL }, enabled = !model.busy) {
-                        Text("Use the Psych Engine example")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { model.repoUrl = EXAMPLE_URL }, enabled = !model.busy) { Text("Psych Engine") }
+                        TextButton(onClick = { model.repoUrl = VSLICE_URL }, enabled = !model.busy) { Text("V-Slice") }
                     }
                 } else {
                     OutlinedButton(

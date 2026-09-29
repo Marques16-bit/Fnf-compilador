@@ -103,6 +103,7 @@ class GitHubBuilder(
                 put("haxe_version", profile.haxe)
                 put("defines", profile.defines.joinToString(" "))
                 put("toolchain", if (profile.modern) "modern" else "legacy")
+                put("recipe", profile.recipe)
             })
         }.toString())
         if (response.status.value != 204) throw BuildException(explain(response))

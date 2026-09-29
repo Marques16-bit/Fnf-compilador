@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 const val DEFAULT_REPO = "Marques16-bit/Fnf-compilador"
 const val DEFAULT_BRANCH = "main"
 const val EXAMPLE_URL = "https://github.com/ShadowMario/FNF-PsychEngine"
+const val VSLICE_URL = "https://github.com/FunkinCrew/Funkin"
 
 enum class Stage(val label: String) {
     Source("Source"),
@@ -211,7 +212,8 @@ class CompilerModel(
                 "source_ref" to source.ref,
                 "haxe_version" to profile.haxe,
                 "defines" to profile.defines.joinToString(" "),
-                "toolchain" to if (profile.modern) "modern" else "legacy"
+                "toolchain" to if (profile.modern) "modern" else "legacy",
+                "recipe" to profile.recipe
             )
         )
         stage = 2

@@ -38,6 +38,7 @@ object Analyzer {
     private const val MAX_SCAN_BYTES = 500_000L
     private const val MAX_WARNINGS = 60
     private const val MODERN_HAXE = "4.3.4"
+    private const val VSLICE_HAXE = "4.3.7"
 
     suspend fun analyze(source: SourceFiles, target: BuildTarget): Analysis {
         val files = source.names
@@ -48,24 +49,29 @@ object Analyzer {
         val xmlPath = files
             .filter { it == "Project.xml" || it.endsWith("/Project.xml") }
             .minByOrNull { it.length }
-        if (xmlPath == null) {
+        val hxpPath = files
+            .filter { it == "project.hxp" || it.endsWith("/project.hxp") }
+            .minByOrNull { it.length }
+        val projectPath = xmlPath ?: hxpPath
+        if (projectPath == null) {
             return Analysis(
                 Finding(false, "Unknown"),
                 Finding(false, "Unknown"),
                 Finding(false, "Unknown"),
                 Finding(false, "Project.xml missing"),
-                listOf("Project.xml was not found. Make sure the source contains the mod code."),
+                listOf("No Project.xml or project.hxp was found. Make sure the source contains the mod code."),
                 0,
                 false,
                 BuildProfile.Legacy
             )
         }
-        val base = xmlPath.removeSuffix("Project.xml")
-        val xml = source.text(xmlPath)
+        val base = projectPath.substring(0, projectPath.length - projectPath.substringAfterLast('/').length)
+        val xml = source.text(projectPath)
+        val vslice = files.any { it.startsWith(base + "source/funkin/") }
         val warnings = ArrayList<String>()
 
         val hay = (files.take(400).joinToString(" ") + xml).lowercase()
-        val engine = ENGINES.firstOrNull { hay.contains(it.first) }
+        val engine = if (vslice) "vslice" to "V-Slice (Funkin)" else ENGINES.firstOrNull { hay.contains(it.first) }
         val engineFinding = Finding(engine != null, engine?.second ?: "Not identified")
 
         val hmm = files.firstOrNull { it == base + "hmm.json" }
@@ -95,7 +101,21 @@ object Analyzer {
 
         val sources = files.filter { it.endsWith(".hx") }
         var issues = 0
-        if (target.mobile) {
+        if (vslice) {
+            if (files.contains(base + ".gitmodules") && source is ZipSource) {
+                warnings.add("V-Slice keeps its assets in git submodules, which a ZIP does not include. Use the GitHub URL.")
+                issues++
+            }
+            if (target.mobile) {
+                warnings.add("Mobile V-Slice builds compress textures with ASTC and can take over an hour.")
+            }
+            if (target == BuildTarget.IOS) {
+                warnings.add("The IPA is unsigned and has to be re-signed before it installs on a device.")
+            }
+            if (target == BuildTarget.MACOS) {
+                warnings.add("The macOS build is for the runner architecture only, not a universal binary.")
+            }
+        } else if (target.mobile) {
             if (DESKTOP_ONLY_DEFINES.containsMatchIn(xml)) {
                 warnings.add("Mods, Lua and HScript are enabled only on desktop in Project.xml.")
                 issues++
@@ -125,6 +145,7 @@ object Analyzer {
         )
 
         val projectFinding = when {
+            xmlPath == null -> Finding(true, "project.hxp")
             !xml.contains("</project>", ignoreCase = true) -> {
                 warnings.add("The closing project tag was not found in Project.xml. Add the platform settings manually.")
                 Finding(false, "Cannot patch")
@@ -135,12 +156,20 @@ object Analyzer {
             else -> Finding(true, "No change")
         }
 
-        val modern = engine?.first == "psych" || setup != null
-        val profile = BuildProfile(
-            haxe = if (modern) MODERN_HAXE else BuildProfile.Legacy.haxe,
-            defines = if (engine?.first == "psych") listOf("officialBuild") else emptyList(),
-            modern = modern
-        )
+        val modern = engine?.first == "psych" || setup != null || vslice
+        val profile = when {
+            vslice -> BuildProfile(
+                haxe = VSLICE_HAXE,
+                defines = listOf("GITHUB_BUILD") + if (target.mobile) listOf("NO_FEATURE_MOBILE_ADVERTISEMENTS", "NO_FEATURE_MOBILE_IAP") else emptyList(),
+                modern = true,
+                recipe = "vslice"
+            )
+            else -> BuildProfile(
+                haxe = if (modern) MODERN_HAXE else BuildProfile.Legacy.haxe,
+                defines = if (engine?.first == "psych") listOf("officialBuild") else emptyList(),
+                modern = modern
+            )
+        }
 
         val shown = warnings.take(MAX_WARNINGS) + if (warnings.size > MAX_WARNINGS) listOf("And ${warnings.size - MAX_WARNINGS} more warnings.") else emptyList()
         return Analysis(engineFinding, libsFinding, codeFinding, projectFinding, shown, sources.size, true, profile)

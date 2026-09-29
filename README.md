@@ -28,6 +28,12 @@ Psych Engine has no `hmm.json`. The workflow reads the `haxelib` lines of `setup
 
 Desktop targets match the upstream setup. The upstream source has no touch controls and enables mods, Lua and HScript only on desktop, so Android and iOS builds start but are meant for sources with mobile support.
 
+## V-Slice
+
+FunkinCrew/Funkin is built with the `vslice` recipe. It has no Project.xml, only `project.hxp`, keeps its assets in git submodules and pins every library in `hmm.json`, including Funkin forks of Lime, OpenFL, hxcpp, haxelib and hmm. The workflow clones the submodules, installs Funkin's patched haxelib and hmm, runs `hmm install`, compiles hxcpp, rebuilds the native libraries for the target and builds with Haxe 4.3.7, `-release` and `-DGITHUB_BUILD`, the same as the upstream CI. Use the GitHub URL, because a ZIP does not contain the submodules.
+
+For Android the workflow installs NDK 29.0.13113456 with JDK 17 and signs the APK with a throwaway key. Mobile ads and in app purchases are disabled with `-DNO_FEATURE_MOBILE_ADVERTISEMENTS` and `-DNO_FEATURE_MOBILE_IAP`, since they need credentials. The assets are around 4 GB and their license is proprietary, so read the Funkin.assets LICENSE before distributing a build.
+
 ## Project layout
 
 ```text

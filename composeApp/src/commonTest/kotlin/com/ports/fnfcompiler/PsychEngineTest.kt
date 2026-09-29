@@ -58,6 +58,35 @@ class PsychEngineTest {
         assertTrue(result.warnings.any { it.contains("Sys.exit") })
     }
 
+    private val vslice = MapSource(
+        mapOf(
+            "project.hxp" to "class Project extends HXProject {}",
+            "hmm.json" to "{\"dependencies\":[{\"name\":\"lime\",\"type\":\"git\",\"ref\":\"abc\",\"url\":\"https://example.com\"}]}",
+            ".gitmodules" to "[submodule \"assets\"]",
+            "source/funkin/Main.hx" to "class Main {}"
+        )
+    )
+
+    @Test
+    fun detectsVSliceFromProjectHxp() = runTest {
+        val result = Analyzer.analyze(vslice, BuildTarget.WINDOWS)
+        assertTrue(result.hasProject)
+        assertEquals("V-Slice (Funkin)", result.engine.label)
+        assertEquals("project.hxp", result.project.label)
+        assertEquals("vslice", result.profile.recipe)
+        assertEquals("4.3.7", result.profile.haxe)
+        assertEquals(listOf("GITHUB_BUILD"), result.profile.defines)
+    }
+
+    @Test
+    fun vSliceMobileDisablesAdsAndPurchases() = runTest {
+        val result = Analyzer.analyze(vslice, BuildTarget.ANDROID)
+        assertTrue(result.profile.defines.contains("NO_FEATURE_MOBILE_ADVERTISEMENTS"))
+        assertTrue(result.profile.defines.contains("NO_FEATURE_MOBILE_IAP"))
+        assertTrue(result.warnings.any { it.contains("ASTC") })
+        assertTrue(result.warnings.none { it.contains("touch controls") })
+    }
+
     @Test
     fun parsesRepositoryReferences() {
         val plain = RepoRef.parse("https://github.com/ShadowMario/FNF-PsychEngine")
