@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FNF → Android</title>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{
+  --bg:#f3f0fa;--card:#ffffff;--ink:#241b3a;--muted:#6b6485;--line:#d9d2ec;
+  --purple:#a24bd6;--cyan:#12a8c9;--green:#1fa85a;--red:#e0344f;--code:#ede8f8;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#171126;--card:#221a38;--ink:#f0ebfb;--muted:#a79fc4;--line:#3a2f5a;
+  --purple:#c56cf0;--cyan:#3fd0ee;--green:#4fdc86;--red:#ff5c78;--code:#120d20;}}
+:root[data-theme="dark"]{
+  --bg:#171126;--card:#221a38;--ink:#f0ebfb;--muted:#a79fc4;--line:#3a2f5a;
+  --purple:#c56cf0;--cyan:#3fd0ee;--green:#4fdc86;--red:#ff5c78;--code:#120d20;}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Nunito,system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
+h1{font:400 34px/1.05 Bungee,Impact,sans-serif;margin:8px 0 6px;letter-spacing:.5px}
+.lead{color:var(--muted);margin:0 0 18px;max-width:52ch}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:26px 16px;text-align:center;background:var(--card);cursor:pointer}
+.drop:focus-within,.drop:hover{border-color:var(--purple)}
+.drop strong{display:block;font-size:18px}
+.drop span{color:var(--muted);font-size:14px}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+#status{margin:14px 0;color:var(--muted);min-height:1.5em}
+.arrows{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0}
+.arrow{background:var(--card);border:2px solid var(--line);border-radius:12px;padding:10px 4px;text-align:center;transition:border-color .25s,transform .25s}
+.arrow svg{width:34px;height:34px;display:block;margin:0 auto 4px;fill:var(--line);transition:fill .25s}
+.arrow small{font-size:12px;color:var(--muted);display:block;line-height:1.2}
+.arrow.ok{border-color:var(--c);transform:translateY(-3px)}
+.arrow.ok svg{fill:var(--c)}
+.arrow.warn{border-color:var(--red)}
+.arrow.warn svg{fill:var(--red)}
+.a1{--c:var(--purple)}.a2{--c:var(--cyan)}.a3{--c:var(--green)}.a4{--c:var(--red)}
+.tabs{display:flex;gap:6px;margin:22px 0 10px;overflow-x:auto}
+.tabs button{flex:1;min-width:max-content;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 12px;font:700 14px Nunito,sans-serif;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--purple);background:var(--purple);color:#fff}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.panel[hidden]{display:none}
+textarea{width:100%;height:280px;background:var(--code);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;resize:vertical;overflow:auto;white-space:pre}
+.row{display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.btn{border:0;background:var(--cyan);color:#06222a;border-radius:10px;padding:10px 16px;font:700 15px Nunito,sans-serif;cursor:pointer}
+.hint{color:var(--muted);font-size:13px}
+ul.warns{margin:0;padding-left:18px}
+ul.warns li{margin:6px 0;word-break:break-word}
+.tag{color:var(--muted);font-size:13px}
+.ok-txt{color:var(--green);font-weight:700}
+:focus-visible{outline:3px solid var(--purple);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>FNF → Android</h1>
+  <p class="lead">Envie o .zip do mod. O app analisa o projeto, ajusta o Project.xml e gera a workflow do GitHub Actions. Tudo roda no seu aparelho: o zip não é enviado a lugar nenhum.</p>
+
+  <label class="drop">
+    <strong>Escolher o .zip do mod</strong>
+    <span>Precisa conter o Project.xml</span>
+    <input type="file" id="file" accept=".zip,application/zip">
+  </label>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <div class="arrows" id="arrows" hidden>
+    <div class="arrow a1" id="r-engine"><svg viewBox="0 0 24 24"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-engine">Engine</small></div>
+    <div class="arrow a2" id="r-libs"><svg viewBox="0 0 24 24" style="transform:rotate(180deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-libs">Libs</small></div>
+    <div class="arrow a3" id="r-code"><svg viewBox="0 0 24 24" style="transform:rotate(-90deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-code">Código</small></div>
+    <div class="arrow a4" id="r-xml"><svg viewBox="0 0 24 24" style="transform:rotate(90deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-xml">Project.xml</small></div>
+  </div>
+
+  <section id="results" hidden>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="report">Relatório</button>
+      <button role="tab" aria-selected="false" data-tab="workflow">Workflow</button>
+      <button role="tab" aria-selected="false" data-tab="xml">Project.xml</button>
+    </div>
+    <div class="panel" id="p-report" role="tabpanel"></div>
+    <div class="panel" id="p-workflow" role="tabpanel" hidden>
+      <p class="hint">Salve como <b>.github/workflows/android.yml</b> no seu repositório.</p>
+      <textarea id="ta-workflow" readonly></textarea>
+      <div class="row"><button class="btn" data-copy="ta-workflow">Copiar workflow</button><span class="hint" id="c-workflow"></span></div>
+    </div>
+    <div class="panel" id="p-xml" role="tabpanel" hidden>
+      <p class="hint">Project.xml com as configurações de Android. Substitua o original.</p>
+      <textarea id="ta-xml" readonly></textarea>
+      <div class="row"><button class="btn" data-copy="ta-xml">Copiar Project.xml</button><span class="hint" id="c-xml"></span></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const DESKTOP = [
+  [/discord_rpc|Discord\./, "Discord RPC não existe no Android. Envolva em #if desktop."],
+  [/Sys\.command|Sys\.exit/, "Sys.command/Sys.exit podem quebrar no Android."],
+  [/sys\.thread|Thread\.create/, "Threads: teste no Android, há risco de crash."],
+  [/FileDialog|systools|hxvlc|VideoHandler/, "Vídeo ou diálogo nativo: precisa de lib mobile."],
+  [/#if\s+(windows|desktop)/, "Bloco desktop: confira se existe alternativa para mobile."]
+];
+const ENGINES = [["forever","Forever Engine"],["psych","Psych Engine"],["kade","Kade Engine"]];
+const ANDROID_XML = '\n\t<android target-sdk-version="29" minimum-sdk-version="21" />\n' +
+  '\t<config:android permission="android.permission.WRITE_EXTERNAL_STORAGE" />\n' +
+  '\t<config:android permission="android.permission.READ_EXTERNAL_STORAGE" />\n';
+
+const $ = id => document.getElementById(id);
+const setStatus = t => { $("status").textContent = t; };
+
+function workflowYml(){
+  return [
+"name: Android Build",
+"on: [workflow_dispatch]",
+"jobs:",
+"  build:",
+"    runs-on: ubuntu-latest",
+"    steps:",
+"      - uses: actions/checkout@v4",
+"      - uses: krdlab/setup-haxe@v1",
+"        with: {haxe-version: 4.2.5}",
+"      - uses: actions/setup-java@v4",
+"        with: {distribution: temurin, java-version: 11}",
+"      - uses: nttld/setup-ndk@v1",
+"        id: ndk",
+"        with: {ndk-version: r15c}",
+"      - run: |",
+"          haxelib setup ~/haxelib",
+"          haxelib install hmm",
+"          haxelib run hmm install",
+"          haxelib run lime setup -alias -y",
+"          haxelib run lime config ANDROID_SDK $ANDROID_HOME",
+"          haxelib run lime config ANDROID_NDK_ROOT \${{ steps.ndk.outputs.ndk-path }}",
+"          haxelib run lime config JAVA_HOME $JAVA_HOME",
+"          haxelib run lime config ANDROID_SETUP true",
+"      - run: haxelib run lime build android -final 2>&1 | tee build.log",
+"      - if: always()",
+"        uses: actions/upload-artifact@v4",
+"        with:",
+"          name: build-result",
+"          path: |",
+"            export/release/android/bin/app/build/outputs/apk/**/*.apk",
+"            build.log",
+""].join("\n");
+}
+
+function mark(id, textId, ok, label){
+  const el = $(id);
+  el.classList.remove("ok","warn");
+  el.classList.add(ok ? "ok" : "warn");
+  $(textId).textContent = label;
+}
+
+async function analyze(file){
+  setStatus("Lendo o zip...");
+  $("results").hidden = true;
+  let zip;
+  try { zip = await JSZip.loadAsync(file); }
+  catch (e) { setStatus("Não foi possível abrir o arquivo. Envie um .zip válido."); return; }
+
+  const names = Object.keys(zip.files).filter(n => !zip.files[n].dir);
+  if (names.some(n => n.includes("..") || n.startsWith("/"))) {
+    setStatus("O zip tem caminhos suspeitos e foi recusado."); return;
+  }
+  const xmlPath = names.filter(n => /(^|\/)Project\.xml$/.test(n)).sort((a,b)=>a.length-b.length)[0];
+  if (!xmlPath) { setStatus("Project.xml não encontrado no zip. Confira se enviou o código-fonte do mod."); return; }
+  const base = xmlPath.slice(0, xmlPath.length - "Project.xml".length);
+
+  setStatus("Analisando o projeto...");
+  const xml = await zip.files[xmlPath].async("string");
+  const warnings = [];
+
+  // Engine
+  const hay = (names.slice(0, 400).join(" ") + xml).toLowerCase();
+  const eng = ENGINES.find(([k]) => hay.includes(k));
+  const engineName = eng ? eng[1] : "Não identificada";
+  mark("r-engine","t-engine", !!eng, engineName);
+
+  // Libs
+  const hmmPath = names.find(n => n === base + "hmm.json");
+  let unpinned = [];
+  if (hmmPath) {
+    try {
+      const deps = JSON.parse(await zip.files[hmmPath].async("string")).dependencies || [];
+      unpinned = deps.filter(d => !d.version && !d.ref).map(d => d.name);
+    } catch (e) { warnings.push("hmm.json inválido: não foi possível ler as dependências."); }
+  } else {
+    warnings.push("hmm.json ausente: as dependências podem falhar no build.");
+  }
+  if (unpinned.length) warnings.push("Libs sem versão fixa (risco de quebrar): " + unpinned.join(", ") + ".");
+  mark("r-libs","t-libs", !unpinned.length && !!hmmPath, unpinned.length ? unpinned.length + " sem versão" : "Libs ok");
+
+  // Código
+  const hx = names.filter(n => n.endsWith(".hx")).slice(0, 1500);
+  let codeIssues = 0;
+  for (const n of hx) {
+    const f = zip.files[n];
+    if (f._data && f._data.uncompressedSize > 500000) continue;
+    const code = await f.async("string");
+    for (const [re, msg] of DESKTOP) {
+      if (re.test(code)) { warnings.push(n.slice(base.length) + ": " + msg); codeIssues++; }
+    }
+  }
+  mark("r-code","t-code", codeIssues === 0, codeIssues ? codeIssues + " avisos" : hx.length + " arquivos ok");
+
+  // Project.xml
+  const had = /target-sdk-version/.test(xml);
+  const patched = had ? xml : xml.replace(/<\/project>\s*$/i, ANDROID_XML + "</project>");
+  const patchedOk = had || patched !== xml;
+  if (!patchedOk) warnings.push("Não achei </project> no Project.xml: adicione as linhas de Android manualmente.");
+  mark("r-xml","t-xml", patchedOk, had ? "Já tinha Android" : "Ajustado");
+
+  $("arrows").hidden = false;
+  $("ta-workflow").value = workflowYml();
+  $("ta-xml").value = patched;
+
+  const list = warnings.length
+    ? '<ul class="warns">' + warnings.slice(0, 60).map(w => "<li></li>").join("") + "</ul>"
+    : '<p class="ok-txt">Nenhum problema encontrado na análise.</p>';
+  $("p-report").innerHTML =
+    '<p><b>Engine:</b> ' + "<span id=\"eng\"></span>" + '</p>' +
+    '<p class="tag">' + hx.length + ' arquivos .hx analisados. A análise reduz erros, mas só o build real confirma. Se falhar, use o build.log para corrigir.</p>' + list;
+  $("eng").textContent = engineName;
+  const lis = $("p-report").querySelectorAll("li");
+  warnings.slice(0, 60).forEach((w, i) => { lis[i].textContent = w; });
+  if (warnings.length > 60) {
+    const more = document.createElement("p");
+    more.className = "tag";
+    more.textContent = "E mais " + (warnings.length - 60) + " avisos.";
+    $("p-report").appendChild(more);
+  }
+
+  $("results").hidden = false;
+  setStatus("Análise concluída.");
+}
+
+$("file").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (f) analyze(f).catch(err => setStatus("Erro na análise: " + err.message));
+});
+
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-selected", x === b));
+  ["report","workflow","xml"].forEach(t => { $("p-" + t).hidden = (t !== b.dataset.tab); });
+}));
+
+document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+  const ta = $(b.dataset.copy);
+  const msg = $("c-" + b.dataset.copy.replace("ta-",""));
+  try { await navigator.clipboard.writeText(ta.value); msg.textContent = "Copiado."; }
+  catch (e) {
+    try { ta.select(); document.execCommand("copy"); msg.textContent = "Copiado."; }
+    catch (e2) { msg.textContent = "Selecione o texto e copie manualmente."; }
+  }
+}));
+</script>
+</body>
+</html>
