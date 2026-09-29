@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>FNF → Android</title>
+<title>FNF-COMPILER</title>
 <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -22,7 +22,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0px)}
 *,*::before,*::after{box-sizing:inherit}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Nunito,system-ui,sans-serif}
 main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
-h1{font:400 34px/1.05 Bungee,Impact,sans-serif;margin:8px 0 6px;letter-spacing:.5px}
+h1{font:400 30px/1.05 Bungee,Impact,sans-serif;margin:8px 0 6px;letter-spacing:.5px}
 .lead{color:var(--muted);margin:0 0 18px;max-width:52ch}
 .drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:26px 16px;text-align:center;background:var(--card);cursor:pointer}
 .drop:focus-within,.drop:hover{border-color:var(--purple)}
@@ -32,13 +32,13 @@ h1{font:400 34px/1.05 Bungee,Impact,sans-serif;margin:8px 0 6px;letter-spacing:.
 #status{margin:14px 0;color:var(--muted);min-height:1.5em}
 .arrows{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0}
 .arrow{background:var(--card);border:2px solid var(--line);border-radius:12px;padding:10px 4px;text-align:center;transition:border-color .25s,transform .25s}
-.arrow svg{width:34px;height:34px;display:block;margin:0 auto 4px;fill:var(--line);transition:fill .25s}
+.arrow svg{width:46px;height:46px;display:block;margin:0 auto 4px;fill:none;stroke:var(--line);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:stroke .25s}
 .arrow small{font-size:12px;color:var(--muted);display:block;line-height:1.2}
 .arrow.ok{border-color:var(--c);transform:translateY(-3px)}
-.arrow.ok svg{fill:var(--c)}
+.arrow.ok svg{stroke:var(--c)}
 .arrow.warn{border-color:var(--red)}
-.arrow.warn svg{fill:var(--red)}
-.a1{--c:var(--purple)}.a2{--c:var(--cyan)}.a3{--c:var(--green)}.a4{--c:var(--red)}
+.arrow.warn svg{stroke:var(--red)}
+.a1{--c:var(--purple)}.a2{--c:var(--cyan)}.a3{--c:var(--green)}.a4{--c:#e0a11e}
 .tabs{display:flex;gap:6px;margin:22px 0 10px;overflow-x:auto}
 .tabs button{flex:1;min-width:max-content;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 12px;font:700 14px Nunito,sans-serif;cursor:pointer}
 .tabs button[aria-selected="true"]{border-color:var(--purple);background:var(--purple);color:#fff}
@@ -66,7 +66,7 @@ h2{font:400 20px/1.1 Bungee,Impact,sans-serif;margin:0 0 8px}
 </head>
 <body>
 <main>
-  <h1>FNF → Android</h1>
+  <h1>FNF-COMPILER</h1>
   <p class="lead">Envie o .zip do mod. O app analisa o projeto, ajusta o Project.xml e gera a workflow do GitHub Actions. Tudo roda no seu aparelho: o zip não é enviado a lugar nenhum.</p>
 
   <label class="drop">
@@ -77,10 +77,10 @@ h2{font:400 20px/1.1 Bungee,Impact,sans-serif;margin:0 0 8px}
   <div id="status" role="status" aria-live="polite"></div>
 
   <div class="arrows" id="arrows" hidden>
-    <div class="arrow a1" id="r-engine"><svg viewBox="0 0 24 24"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-engine">Engine</small></div>
-    <div class="arrow a2" id="r-libs"><svg viewBox="0 0 24 24" style="transform:rotate(180deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-libs">Libs</small></div>
-    <div class="arrow a3" id="r-code"><svg viewBox="0 0 24 24" style="transform:rotate(-90deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-code">Código</small></div>
-    <div class="arrow a4" id="r-xml"><svg viewBox="0 0 24 24" style="transform:rotate(90deg)"><path d="M12 3 3 14h5v7h8v-7h5z"/></svg><small id="t-xml">Project.xml</small></div>
+    <div class="arrow a1" id="r-engine"><svg viewBox="0 0 48 48"><rect x="8" y="20" width="20" height="16" rx="2"/><path d="M13 20v-5h10v5"/><circle cx="5" cy="28" r="3"/><path d="M14 26v6M18 26v6M22 26v6"/><path d="M28 26h2v4h-2"/><g transform="rotate(25 36 26)"><path d="M32 10v5a4 4 0 0 0 8 0v-5"/><path d="M36 19v16"/><circle cx="36" cy="37" r="2.5"/></g><path d="M44 28q2 3 0 6"/></svg><small id="t-engine">Engine</small></div>
+    <div class="arrow a2" id="r-libs"><svg viewBox="0 0 48 48"><rect x="9" y="12" width="7" height="26" rx="1.5"/><rect x="18" y="8" width="7" height="30" rx="1.5"/><path d="M28 15l6-2 6 21-6 2z"/><path d="M11 18h3M20 14h3"/><path d="M6 41h36"/></svg><small id="t-libs">Libs</small></div>
+    <div class="arrow a3" id="r-code"><svg viewBox="0 0 48 48"><rect x="5" y="8" width="38" height="32" rx="3"/><path d="M5 15h38"/><circle cx="9.5" cy="11.5" r=".9"/><circle cx="13" cy="11.5" r=".9"/><path d="M10 21l4 3-4 3"/><path d="M16 30h5"/><path d="M27.5 20v6"/><ellipse cx="32.5" cy="23" rx="1.6" ry="3"/><path d="M38 20v6"/><ellipse cx="28" cy="32" rx="1.6" ry="3"/><path d="M33 29v6"/><ellipse cx="38" cy="32" rx="1.6" ry="3"/></svg><small id="t-code">Código</small></div>
+    <div class="arrow a4" id="r-xml"><svg viewBox="0 0 48 48"><path d="M12 5h17l9 9v29H12z"/><path d="M29 5v9h9"/><path d="M17 21h16M17 27h16M17 33h11"/></svg><small id="t-xml">Project.xml</small></div>
   </div>
 
   <section id="results" hidden>
@@ -103,14 +103,13 @@ h2{font:400 20px/1.1 Bungee,Impact,sans-serif;margin:0 0 8px}
   </section>
 <section class="panel" id="compile" style="margin-top:22px">
   <h2>Compilar</h2>
-  <p class="hint">O build roda no GitHub e o app mostra o andamento. Crie um token em GitHub → Settings → Developer settings → Fine-grained tokens, só para o repositório do mod, com Actions: Read and write. Ele fica salvo apenas neste aparelho.</p>
+  <p class="hint">Escolha o .zip do mod lá em cima. O app envia o zip ao seu repositório de build no GitHub, que compila e devolve o APK. Token: GitHub → Settings → Developer settings → Fine-grained tokens, só para o repositório de build, com Contents e Actions em Read and write. Fica salvo apenas neste aparelho.</p>
   <label class="fld">Token do GitHub<input id="f-token" type="password" autocomplete="off" placeholder="github_pat_..."></label>
-  <label class="fld">Repositório do mod (dono/repo)<input id="f-repo" placeholder="Marques16-bit/Grandpa-Death-source"></label>
   <div class="two">
-    <label class="fld">Arquivo da workflow<input id="f-wf" placeholder="android.yml"></label>
+    <label class="fld">Repositório de build<input id="f-repo" placeholder="Marques16-bit/Fnf-compilador"></label>
     <label class="fld">Branch<input id="f-ref" placeholder="main"></label>
   </div>
-  <div class="row"><button class="btn" id="go">Compilar</button><span class="hint">A workflow precisa ter workflow_dispatch (a que o app gera já tem).</span></div>
+  <div class="row"><button class="btn" id="go">Compilar</button><span class="hint">O repositório é público: o zip é apagado da release assim que o build começa.</span></div>
   <pre class="term" id="term" aria-live="polite"></pre>
   <div class="row" id="out"></div>
 </section>
@@ -260,7 +259,7 @@ async function analyze(file){
 
 $("file").addEventListener("change", e => {
   const f = e.target.files[0];
-  if (f) analyze(f).catch(err => setStatus("Erro na análise: " + err.message));
+  if (f) { modFile = f; analyze(f).catch(err => setStatus("Erro na análise: " + err.message)); }
 });
 
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
@@ -292,38 +291,22 @@ function explain(r){
   if (r.status === 422) return "A workflow não aceita disparo manual. Adicione workflow_dispatch em 'on:'.";
   return "O GitHub respondeu com erro " + r.status + ".";
 }
-async function downloadArtifact(c, art){
-  log("Baixando " + art.name + "...");
-  try {
-    const r = await gh("/repos/" + c.repo + "/actions/artifacts/" + art.id + "/zip", {}, c.token);
-    if (!r.ok) throw new Error("http");
-    const z = await JSZip.loadAsync(await r.arrayBuffer());
-    const names = Object.keys(z.files).filter(n => !z.files[n].dir);
-    const n = names.find(x => x.endsWith(".apk")) || names[0];
-    const blob = await z.files[n].async("blob");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = n.split("/").pop();
-    document.body.appendChild(a); a.click(); a.remove();
-    log("Arquivo pronto: " + a.download);
-  } catch (e) { log("Não foi possível baixar aqui. Use o botão da página do build."); }
-}
-async function showResult(c, run){
+let modFile = null;
+const mb = n => (n / 1048576).toFixed(1) + " MB";
+async function showResult(c, run, tag){
   const out = $("out"); out.textContent = "";
-  const page = document.createElement("a");
-  page.className = "btn alt"; page.href = run.html_url; page.target = "_blank"; page.rel = "noopener"; page.textContent = "Abrir página do build";
-  out.appendChild(page);
   if (run.conclusion === "success") {
     log("Build concluído com sucesso.");
     try {
-      const r = await gh("/repos/" + c.repo + "/actions/runs/" + run.id + "/artifacts", {}, c.token);
-      const d = r.ok ? await r.json() : {artifacts: []};
-      (d.artifacts || []).filter(a => !a.expired).forEach(a => {
-        const b = document.createElement("button");
-        b.className = "btn"; b.textContent = "Baixar " + a.name;
-        b.addEventListener("click", () => downloadArtifact(c, a));
-        out.appendChild(b);
-      });
-    } catch (e) { log("Não consegui listar os arquivos do build."); }
+      const r = await gh("/repos/" + c.repo + "/releases/tags/" + tag, {}, c.token);
+      const apk = ((await r.json()).assets || []).find(a => a.name.endsWith(".apk"));
+      if (apk) {
+        const a = document.createElement("a");
+        a.className = "btn"; a.href = apk.browser_download_url; a.target = "_blank"; a.rel = "noopener";
+        a.textContent = "Baixar APK (" + mb(apk.size) + ")";
+        out.appendChild(a);
+      } else log("O build passou, mas não achei o APK na release.");
+    } catch (e) { log("Não consegui buscar o APK. Veja a aba Releases do repositório."); }
   } else {
     log("O build terminou como: " + (LBL[run.conclusion] || run.conclusion) + ".");
     try {
@@ -331,27 +314,40 @@ async function showResult(c, run){
       const job = ((await jr.json()).jobs || []).find(j => j.conclusion === "failure");
       if (job) {
         const lr = await gh("/repos/" + c.repo + "/actions/jobs/" + job.id + "/logs", {}, c.token);
-        if (lr.ok) { log("Final do log:\n" + (await lr.text()).split("\n").slice(-40).join("\n")); }
+        if (lr.ok) log("Final do log:\n" + (await lr.text()).split("\n").slice(-40).join("\n"));
         else log("Abra a página do build para ver o log completo.");
       }
     } catch (e) { log("Abra a página do build para ver o log completo."); }
   }
+  const page = document.createElement("a");
+  page.className = "btn alt"; page.href = run.html_url; page.target = "_blank"; page.rel = "noopener"; page.textContent = "Abrir página do build";
+  out.appendChild(page);
 }
 let busy = false;
 async function compile(){
   if (busy) return;
-  const c = {token: $("f-token").value.trim(), repo: $("f-repo").value.trim(),
-    wf: $("f-wf").value.trim() || "android.yml", ref: $("f-ref").value.trim() || "main"};
+  const c = {token: $("f-token").value.trim(), repo: $("f-repo").value.trim() || "Marques16-bit/Fnf-compilador", ref: $("f-ref").value.trim() || "main"};
   term.textContent = ""; $("out").textContent = "";
-  if (!c.token || !/^[\w.-]+\/[\w.-]+$/.test(c.repo)) { log("Preencha o token e o repositório no formato dono/repo."); return; }
+  if (!c.token) { log("Preencha o token do GitHub."); return; }
+  if (!modFile) { log("Escolha o .zip do mod lá em cima antes de compilar."); return; }
   cfgSave(c); busy = true; $("go").disabled = true;
   try {
+    const tag = "mod-" + Date.now();
+    log("Criando o pacote " + tag + "...");
+    let r = await gh("/repos/" + c.repo + "/releases", {method: "POST",
+      body: JSON.stringify({tag_name: tag, name: tag, prerelease: true, target_commitish: c.ref})}, c.token);
+    if (r.status !== 201) { log(explain(r)); return; }
+    const rel = await r.json();
+    log("Enviando " + modFile.name + " (" + mb(modFile.size) + "). Não feche o app...");
+    r = await fetch("https://uploads.github.com/repos/" + c.repo + "/releases/" + rel.id + "/assets?name=mod.zip", {
+      method: "POST", body: modFile,
+      headers: {"Accept": "application/vnd.github+json", "Authorization": "Bearer " + c.token, "Content-Type": "application/zip"}});
+    if (!r.ok) { log("Falha ao enviar o zip (erro " + r.status + ")."); return; }
+    log("Zip enviado. Iniciando o build...");
     const t0 = Date.now();
-    log("Enviando pedido de build para " + c.repo + "...");
-    let r = await gh("/repos/" + c.repo + "/actions/workflows/" + c.wf + "/dispatches",
-      {method: "POST", body: JSON.stringify({ref: c.ref})}, c.token);
+    r = await gh("/repos/" + c.repo + "/actions/workflows/build-mod.yml/dispatches",
+      {method: "POST", body: JSON.stringify({ref: c.ref, inputs: {tag: tag}})}, c.token);
     if (r.status !== 204) { log(explain(r)); return; }
-    log("Pedido aceito. Aguardando o GitHub iniciar...");
     let run = null;
     for (let i = 0; i < 15 && !run; i++) {
       await sleep(4000);
@@ -374,15 +370,14 @@ async function compile(){
       }));
       if (run.status === "completed") break;
     }
-    await showResult(c, run);
+    await showResult(c, run, tag);
   } catch (e) {
-    log("Erro de conexão. Verifique a internet e tente de novo.");
+    log("Falha de conexão ou envio bloqueado pelo navegador. Verifique a internet e tente de novo.");
   } finally { busy = false; $("go").disabled = false; }
 }
 (function initCompile(){
   const c = cfgLoad();
-  $("f-token").value = c.token || ""; $("f-repo").value = c.repo || "";
-  $("f-wf").value = c.wf || ""; $("f-ref").value = c.ref || "";
+  $("f-token").value = c.token || ""; $("f-repo").value = c.repo || ""; $("f-ref").value = c.ref || "";
   $("go").addEventListener("click", compile);
 })();
 </script>
