@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without the v prefix, for example 1.0.0
+        description: Version like 1.0.0, a leading v is accepted
         required: true
         type: string
       prerelease:
@@ -25,37 +25,43 @@ jobs:
   validate:
     name: Validate version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     env:
       GH_TOKEN: ${{ github.token }}
-      VERSION: ${{ inputs.version }}
+      INPUT_VERSION: ${{ inputs.version }}
     steps:
       - name: Check the version format and tag
+        id: check
         run: |
+          VERSION="$(echo "$INPUT_VERSION" | tr -d '[:space:]')"
+          VERSION="${VERSION#[vV]}"
           if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Version must look like 1.2.3, got: $VERSION"
+            echo "Version must look like 1.2.3 or v1.2.3, got: $INPUT_VERSION"
             exit 1
           fi
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
             echo "Tag v$VERSION already exists"
             exit 1
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build
     needs: validate
     uses: ./.github/workflows/Build.yml
     with:
-      version: ${{ inputs.version }}
+      version: ${{ needs.validate.outputs.version }}
 
   publish:
     name: Publish release
-    needs: build
+    needs: [validate, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      VERSION: ${{ inputs.version }}
+      VERSION: ${{ needs.validate.outputs.version }}
       PRERELEASE: ${{ inputs.prerelease }}
       NOTES: ${{ inputs.notes }}
     steps:

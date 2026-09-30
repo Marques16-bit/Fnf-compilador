@@ -85,4 +85,4 @@ xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Release -sdk 
 
 `Build.yml` runs on every push, pull request and manual dispatch. It runs the tests, then builds the Android APK, the Windows MSI and EXE, the macOS DMG, the Linux DEB and the iOS IPA.
 
-`release.yml` runs only when started manually from the Actions tab. It asks for a version such as `1.2.3`, a pre-release flag and optional notes. It checks that the tag `v1.2.3` does not exist yet, calls `Build.yml` with that version so the app, the APK version code and the IPA carry it, and publishes every file to a GitHub release named `v1.2.3`, with the platform and version in each file name.
+`release.yml` runs only when started manually from the Actions tab. It asks for a version such as `1.2.3` (a leading `v` is accepted), a pre-release flag and optional notes. It checks that the tag `v1.2.3` does not exist yet, calls `Build.yml` with that version so the app, the APK version code and the IPA carry it, and publishes every file to a GitHub release named `v1.2.3`, with the platform and version in each file name.
