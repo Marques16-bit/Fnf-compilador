@@ -6,26 +6,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ports.fnfcompiler.core.Analysis
 import com.ports.fnfcompiler.core.Analyzer
+import com.ports.fnfcompiler.core.ArchiveException
 import com.ports.fnfcompiler.core.BuildConfig
+import com.ports.fnfcompiler.core.BuildException
 import com.ports.fnfcompiler.core.BuildOutcome
 import com.ports.fnfcompiler.core.BuildProfile
 import com.ports.fnfcompiler.core.BuildSource
 import com.ports.fnfcompiler.core.BuildTarget
 import com.ports.fnfcompiler.core.GitHubBuilder
+import com.ports.fnfcompiler.core.PendingBuild
 import com.ports.fnfcompiler.core.RepoRef
 import com.ports.fnfcompiler.core.RepoSource
 import com.ports.fnfcompiler.core.SettingsStore
 import com.ports.fnfcompiler.core.SourceFiles
 import com.ports.fnfcompiler.core.ZipSource
+import com.ports.fnfcompiler.platform.clearCrashLog
+import com.ports.fnfcompiler.platform.readCrashLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.withContext
 
 const val DEFAULT_REPO = "Marques16-bit/Fnf-compilador"
 const val DEFAULT_BRANCH = "main"
 const val EXAMPLE_URL = "https://github.com/ShadowMario/FNF-PsychEngine"
 const val VSLICE_URL = "https://github.com/FunkinCrew/Funkin"
+const val MARIO_URL = "https://github.com/Dewott2501/Mario-Madness"
 
 enum class Stage(val label: String) {
     Source("Source"),
@@ -36,10 +46,11 @@ enum class Stage(val label: String) {
 class ManualBuild(val tag: String, val pageUrl: String, val values: List<Pair<String, String>>)
 
 class CompilerModel(
-    private val scope: CoroutineScope,
+    parent: CoroutineScope,
     private val store: SettingsStore,
     private val openUrl: (String) -> Unit
 ) {
+    private val scope = parent + CoroutineExceptionHandler { _, error -> onUnexpected(error) }
     private val saved = store.load()
 
     var target by mutableStateOf(store.loadTarget())
@@ -65,9 +76,14 @@ class CompilerModel(
         private set
     var manual by mutableStateOf<ManualBuild?>(null)
         private set
+    var pending by mutableStateOf(store.loadPending())
+        private set
+    var lastCrash by mutableStateOf(readCrashLog())
+        private set
     val log = mutableStateListOf<String>()
 
     private var loaded: SourceFiles? = null
+    private var job: Job? = null
 
     val automatic: Boolean get() = token.isNotBlank()
 
@@ -88,23 +104,28 @@ class CompilerModel(
                 zip = picked
                 replaceSource(picked)
                 analyze(picked)
-            } catch (e: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
                 zip = null
-                fail("Could not read the archive: ${e.message}")
+                fail("Could not read the archive. " + friendly(e))
             }
         }
     }
 
     fun check() {
         if (busy) return
-        scope.launch {
+        job = scope.launch {
             busy = true
             reset()
             try {
                 val source = loadSource() ?: return@launch
                 analyze(source)
-            } catch (e: Exception) {
-                fail(e.message ?: "Could not read the source")
+            } catch (e: CancellationException) {
+                status = "Cancelled"
+                throw e
+            } catch (e: Throwable) {
+                fail(friendly(e))
             } finally {
                 busy = false
             }
@@ -113,21 +134,17 @@ class CompilerModel(
 
     fun compile() {
         if (busy) return
-        scope.launch {
+        job = scope.launch {
             busy = true
             reset()
             try {
                 val source = loadSource() ?: return@launch
                 val result = analyze(source) ?: return@launch
                 if (!result.hasProject) {
-                    fail("Project.xml was not found in the source")
+                    fail("No Project.xml or project.hxp was found in the source")
                     return@launch
                 }
-                val config = BuildConfig(
-                    token.trim(),
-                    buildRepo.trim().ifEmpty { DEFAULT_REPO },
-                    branch.trim().ifEmpty { DEFAULT_BRANCH }
-                )
+                val config = currentConfig()
                 store.save(BuildConfig(config.token, buildRepo.trim(), branch.trim()))
                 val buildSource = when (source) {
                     is RepoSource -> BuildSource.Repository(source.slug, source.ref)
@@ -139,32 +156,78 @@ class CompilerModel(
                 } else {
                     runAutomatic(config, buildSource, result.profile)
                 }
-            } catch (e: Exception) {
-                fail(e.message ?: "The build could not be started. Check your connection and try again")
+            } catch (e: CancellationException) {
+                status = "Build cancelled"
+                throw e
+            } catch (e: Throwable) {
+                fail(friendly(e))
             } finally {
                 busy = false
             }
         }
     }
 
+    fun cancel() {
+        if (busy) job?.cancel()
+    }
+
+    fun resume() {
+        val waiting = pending ?: return
+        if (busy || !automatic) return
+        job = scope.launch {
+            busy = true
+            reset()
+            target = waiting.target
+            val builder = GitHubBuilder(
+                BuildConfig(token.trim(), waiting.repo.ifEmpty { DEFAULT_REPO }, waiting.branch.ifEmpty { DEFAULT_BRANCH }),
+                ::addLog
+            )
+            try {
+                stage = 2
+                status = "Reconnecting to build ${waiting.tag}"
+                finishBuild(builder.resume(waiting.tag, waiting.target))
+            } catch (e: CancellationException) {
+                builder.cancelRun()
+                clearPending()
+                status = "Build cancelled"
+                throw e
+            } catch (e: Throwable) {
+                fail(friendly(e))
+            } finally {
+                builder.close()
+                busy = false
+            }
+        }
+    }
+
+    fun dismissPending() = clearPending()
+
+    fun dismissCrash() {
+        clearCrashLog()
+        lastCrash = null
+    }
+
     fun checkManual() {
-        val pending = manual ?: return
+        val waiting = manual ?: return
         if (busy) return
-        scope.launch {
+        job = scope.launch {
             busy = true
             val builder = GitHubBuilder(BuildConfig("", buildRepo.trim().ifEmpty { DEFAULT_REPO }, branch.trim().ifEmpty { DEFAULT_BRANCH }), ::addLog)
             try {
-                val found = builder.lookup(pending.tag)
-                if (found?.downloadUrl != null) {
+                val found = builder.lookup(waiting.tag)
+                val url = found?.downloadUrl
+                if (found != null && url != null) {
                     outcome = found
                     stage = 3
                     status = "Build ready"
-                    openUrl(found.downloadUrl)
+                    openUrl(url)
                 } else {
                     status = "Not ready yet. Run the workflow and check again in a few minutes"
                 }
-            } catch (e: Exception) {
-                status = e.message ?: "Could not reach GitHub"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                status = friendly(e)
             } finally {
                 builder.close()
                 busy = false
@@ -174,25 +237,50 @@ class CompilerModel(
 
     fun openPage(url: String) = openUrl(url)
 
+    private fun currentConfig() = BuildConfig(
+        token.trim(),
+        buildRepo.trim().ifEmpty { DEFAULT_REPO },
+        branch.trim().ifEmpty { DEFAULT_BRANCH }
+    )
+
     private suspend fun runAutomatic(config: BuildConfig, source: BuildSource, profile: BuildProfile) {
         stage = 2
         status = "Building on GitHub Actions"
         val builder = GitHubBuilder(config, ::addLog)
         try {
-            val done = builder.build(source, target, profile)
-            outcome = done
-            if (done.success && done.downloadUrl != null) {
-                stage = 3
-                status = "Build ready. The download starts automatically"
-                openUrl(done.downloadUrl)
-            } else if (done.success) {
-                fail("The build passed but no executable was found in the release")
-            } else {
-                fail("The build failed. Read the log below")
-            }
+            val done = builder.build(source, target, profile, onDispatched = { tag ->
+                val record = PendingBuild(tag, target, config.repo, config.branch)
+                store.savePending(record)
+                pending = record
+            })
+            finishBuild(done)
+        } catch (e: CancellationException) {
+            builder.cancelRun()
+            clearPending()
+            throw e
         } finally {
             builder.close()
         }
+    }
+
+    private fun finishBuild(done: BuildOutcome) {
+        clearPending()
+        outcome = done
+        val url = done.downloadUrl
+        if (done.success && url != null) {
+            stage = 3
+            status = "Build ready. The download starts automatically"
+            openUrl(url)
+        } else if (done.success) {
+            fail("The build passed but no executable was found in the release")
+        } else {
+            fail("The build failed. Read the log below")
+        }
+    }
+
+    private fun clearPending() {
+        store.clearPending()
+        pending = null
     }
 
     private fun startManual(config: BuildConfig, source: BuildSource, profile: BuildProfile) {
@@ -254,12 +342,25 @@ class CompilerModel(
             val result = withContext(Dispatchers.Default) { Analyzer.analyze(source, target) }
             analysis = result
             stage = 1
-            status = if (result.hasProject) "Source is ready" else "Project.xml was not found in the source"
+            status = if (result.hasProject) "Source is ready" else "No Project.xml or project.hxp was found in the source"
             result
-        } catch (e: Exception) {
-            fail("Could not analyze the source: ${e.message}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            fail("Could not analyze the source. " + friendly(e))
             null
         }
+    }
+
+    private fun friendly(error: Throwable): String = when {
+        error is BuildException || error is ArchiveException -> error.message ?: "The operation failed"
+        error::class.simpleName == "OutOfMemoryError" -> "Not enough memory for this source. Use the GitHub URL for large projects"
+        else -> "Something went wrong (${error::class.simpleName}: ${error.message ?: "no details"}). Check your connection and try again"
+    }
+
+    private fun onUnexpected(error: Throwable) {
+        busy = false
+        fail(friendly(error))
     }
 
     private fun reset() {

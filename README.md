@@ -34,6 +34,21 @@ FunkinCrew/Funkin is built with the `vslice` recipe. It has no Project.xml, only
 
 For Android the workflow installs NDK 29.0.13113456 with JDK 17 and signs the APK with a throwaway key. Mobile ads and in app purchases are disabled with `-DNO_FEATURE_MOBILE_ADVERTISEMENTS` and `-DNO_FEATURE_MOBILE_IAP`, since they need credentials. The assets are around 4 GB and their license is proprietary, so read the Funkin.assets LICENSE before distributing a build.
 
+## Mario's Madness
+
+Dewott2501/Mario-Madness is a Psych Engine 0.6 era fork. It has no `hmm.json` and no `setup` folder, only `complations_preset.bat` with `haxelib set` lines. The workflow now reads the `haxelib` lines of any `.bat` or `.sh` in the project root or `setup`, installs each pinned version (flixel 5.3.1, lime 8.0.2, openfl 9.2.0 and others), then installs the libraries that Project.xml lists and nothing pinned, using the known git sources for `linc_luajit` and `discord_rpc` and `hscript` 2.5.0. Pins older than flixel 5.4 or lime 8.1 select the legacy toolchain, Haxe 4.2.5, on `ubuntu-22.04` and `macos-15-intel`.
+
+The source includes `#include <windows.h>` in `Transparency.hx`, `Wallpaper.hx` and others without a platform guard, so it only compiles for Windows. The app detects that and warns when another platform is selected.
+
+## Anti crash
+
+- Every network call retries with backoff on connection errors, 5xx, 429 and rate limits. Tracking a build tolerates up to 20 failed polls in a row before giving up, and gives up after six hours.
+- A started build is remembered. If the app is closed or killed, it offers Resume and reattaches to the same run.
+- Cancel stops the local work and cancels the run on GitHub.
+- Errors, including out of memory, become a message instead of a crash.
+- An uncaught crash is written to a file on Android and desktop and to user defaults on iOS. The next launch shows a banner with the details.
+- In the workflow, cloning, submodules, library installs and hmm are retried three times.
+
 ## Project layout
 
 ```text

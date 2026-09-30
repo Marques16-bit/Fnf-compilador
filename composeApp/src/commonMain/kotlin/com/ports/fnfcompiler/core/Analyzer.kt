@@ -22,7 +22,12 @@ data class Analysis(
 )
 
 object Analyzer {
-    private val ENGINES = listOf("forever" to "Forever Engine", "psych" to "Psych Engine", "kade" to "Kade Engine")
+    private val ENGINES = listOf(
+        "mario's madness" to "Mario's Madness",
+        "forever" to "Forever Engine",
+        "psych" to "Psych Engine",
+        "kade" to "Kade Engine"
+    )
 
     private val MOBILE_RULES = listOf(
         Regex("discord_rpc|Discord\\.") to "Discord RPC does not exist on mobile. Wrap it in #if desktop.",
@@ -32,7 +37,17 @@ object Analyzer {
         Regex("#if\\s+(windows|desktop)") to "Desktop only block. Make sure a mobile fallback exists."
     )
 
-    private val DESKTOP_ONLY_DEFINES = Regex("<define\\s+name=\"(MODS_ALLOWED|LUA_ALLOWED|HSCRIPT_ALLOWED)\"[^>]*if=\"desktop\"")
+    private val DESKTOP_ONLY_DEFINES = Regex("<define\\s+name=\"(MODS_ALLOWED|LUA_ALLOWED|HSCRIPT_ALLOWED)\"[^>]*if=\"(desktop|windows)\"")
+    private val WINDOWS_ONLY_DEFINES = Regex("""<define\s+name="(?:LUA_ALLOWED|VIDEOS_ALLOWED)"[^>]*\bif="([^"]*windows[^"]*)"""")
+    private val OTHER_PLATFORMS = listOf("linux", "mac", "desktop", "android", "ios", "mobile")
+    private val WINDOWS_INCLUDE = Regex("""#include\s*<windows\.h>""")
+    private val WINDOWS_GUARD = Regex("""#if[^\n]*windows""")
+    private val HAXELIB_LINE = Regex("""haxelib\s+(set|install|git)\s""")
+    private val FLIXEL_PIN = listOf(
+        Regex("""haxelib\s+(?:set|install)\s+flixel\s+(\d+)\.(\d+)"""),
+        Regex("""<haxelib\s+name="flixel"\s+version="(\d+)\.(\d+)""")
+    )
+    private val LIME_PIN = listOf(Regex("""haxelib\s+(?:set|install)\s+lime\s+(\d+)\.(\d+)"""))
     private val TOUCH_MARKERS = listOf("mobilecontrols", "touchpad", "touchcontrols", "hitbox")
 
     private const val MAX_SCAN_BYTES = 500_000L
@@ -42,7 +57,7 @@ object Analyzer {
 
     suspend fun analyze(source: SourceFiles, target: BuildTarget): Analysis {
         val files = source.names
-        if (files.any { it.contains("..") || it.startsWith("/") }) {
+        if (files.any { it.startsWith("/") || it.split('/').any { segment -> segment == ".." } }) {
             throw ArchiveException("The source contains unsafe paths and was rejected")
         }
 
@@ -75,7 +90,16 @@ object Analyzer {
         val engineFinding = Finding(engine != null, engine?.second ?: "Not identified")
 
         val hmm = files.firstOrNull { it == base + "hmm.json" }
-        val setup = files.firstOrNull { it == base + "setup/unix.sh" || it == base + "setup/windows.bat" }
+        val pinTexts = files
+            .filter { path ->
+                val rel = path.removePrefix(base)
+                path.startsWith(base) && (rel.endsWith(".bat") || rel.endsWith(".sh")) &&
+                    (!rel.contains('/') || (rel.startsWith("setup/") && rel.count { it == '/' } == 1))
+            }
+            .take(6)
+            .mapNotNull { path -> runCatching { source.text(path) }.getOrNull() }
+            .filter { HAXELIB_LINE.containsMatchIn(it) }
+        val setup = pinTexts.isNotEmpty()
         var unpinned = emptyList<String>()
         if (hmm != null) {
             try {
@@ -86,8 +110,8 @@ object Analyzer {
             } catch (e: Exception) {
                 warnings.add("hmm.json is invalid, dependencies could not be read.")
             }
-        } else if (setup == null) {
-            warnings.add("No hmm.json or setup script. Libraries will be installed from Project.xml and may fail.")
+        } else if (!setup) {
+            warnings.add("No hmm.json or pinning script. Libraries will be installed from Project.xml and may fail.")
         }
         if (unpinned.isNotEmpty()) {
             warnings.add("Libraries without a pinned version, they may break: " + unpinned.joinToString(", ") + ".")
@@ -95,12 +119,17 @@ object Analyzer {
         val libsFinding = when {
             unpinned.isNotEmpty() -> Finding(false, "${unpinned.size} unpinned")
             hmm != null -> Finding(true, "Libraries ok")
-            setup != null -> Finding(true, "Setup script")
+            setup -> Finding(true, "Setup script")
             else -> Finding(false, "No lock file")
         }
 
         val sources = files.filter { it.endsWith(".hx") }
         var issues = 0
+        val windowsOnlyFeatures = WINDOWS_ONLY_DEFINES.findAll(xml)
+            .any { match -> OTHER_PLATFORMS.none { match.groupValues[1].contains(it) } }
+        if (target != BuildTarget.WINDOWS && windowsOnlyFeatures) {
+            warnings.add("Lua scripts and videos are enabled only on Windows in this project.")
+        }
         if (vslice) {
             if (files.contains(base + ".gitmodules") && source is ZipSource) {
                 warnings.add("V-Slice keeps its assets in git submodules, which a ZIP does not include. Use the GitHub URL.")
@@ -115,27 +144,42 @@ object Analyzer {
             if (target == BuildTarget.MACOS) {
                 warnings.add("The macOS build is for the runner architecture only, not a universal binary.")
             }
-        } else if (target.mobile) {
-            if (DESKTOP_ONLY_DEFINES.containsMatchIn(xml)) {
-                warnings.add("Mods, Lua and HScript are enabled only on desktop in Project.xml.")
-                issues++
-            }
-            if (files.none { path -> TOUCH_MARKERS.any { path.lowercase().contains(it) } }) {
-                warnings.add("No touch controls found. The mobile build starts but needs a gamepad or keyboard to play.")
-                issues++
-            }
-            for (path in sources.take(source.scanCap)) {
-                if (source.size(path) > MAX_SCAN_BYTES) continue
-                val code = try {
-                    source.text(path)
-                } catch (e: ArchiveException) {
-                    continue
+        } else {
+            if (target.mobile) {
+                if (DESKTOP_ONLY_DEFINES.containsMatchIn(xml)) {
+                    warnings.add("Mods, Lua and HScript are enabled only on desktop in Project.xml.")
+                    issues++
                 }
-                for ((regex, message) in MOBILE_RULES) {
-                    if (regex.containsMatchIn(code)) {
-                        warnings.add(path.removePrefix(base) + ": " + message)
-                        issues++
+                if (files.none { path -> TOUCH_MARKERS.any { path.lowercase().contains(it) } }) {
+                    warnings.add("No touch controls found. The mobile build starts but needs a gamepad or keyboard to play.")
+                    issues++
+                }
+            }
+            if (target.mobile || target != BuildTarget.WINDOWS) {
+                val windowsOnly = ArrayList<String>()
+                for (path in sources.take(source.scanCap)) {
+                    if (source.size(path) > MAX_SCAN_BYTES) continue
+                    val code = try {
+                        source.text(path)
+                    } catch (e: ArchiveException) {
+                        continue
                     }
+                    if (target.mobile) {
+                        for ((regex, message) in MOBILE_RULES) {
+                            if (regex.containsMatchIn(code)) {
+                                warnings.add(path.removePrefix(base) + ": " + message)
+                                issues++
+                            }
+                        }
+                    }
+                    if (target != BuildTarget.WINDOWS && hasUnguardedWindowsInclude(code)) windowsOnly.add(path.removePrefix(base))
+                }
+                if (windowsOnly.isNotEmpty()) {
+                    warnings.add(
+                        "These files call the Windows API without a platform guard, so this source will not compile for ${target.label}: " +
+                            windowsOnly.take(4).joinToString(", ") + ". Build it for Windows."
+                    )
+                    issues++
                 }
             }
         }
@@ -156,7 +200,15 @@ object Analyzer {
             else -> Finding(true, "No change")
         }
 
-        val modern = engine?.first == "psych" || setup != null || vslice
+        val pinText = pinTexts.joinToString("\n") + "\n" + xml
+        val flixel = versionOf(pinText, FLIXEL_PIN)
+        val lime = versionOf(pinText, LIME_PIN)
+        val newer = when {
+            flixel != null -> flixel.first > 5 || (flixel.first == 5 && flixel.second >= 4)
+            lime != null -> lime.first > 8 || (lime.first == 8 && lime.second >= 1)
+            else -> null
+        }
+        val modern = vslice || (newer ?: (engine?.first == "psych" || setup))
         val profile = when {
             vslice -> BuildProfile(
                 haxe = VSLICE_HAXE,
@@ -173,6 +225,21 @@ object Analyzer {
 
         val shown = warnings.take(MAX_WARNINGS) + if (warnings.size > MAX_WARNINGS) listOf("And ${warnings.size - MAX_WARNINGS} more warnings.") else emptyList()
         return Analysis(engineFinding, libsFinding, codeFinding, projectFinding, shown, sources.size, true, profile)
+    }
+
+    private fun hasUnguardedWindowsInclude(code: String): Boolean {
+        val include = WINDOWS_INCLUDE.find(code) ?: return false
+        return !WINDOWS_GUARD.containsMatchIn(code.substring(0, include.range.first))
+    }
+
+    private fun versionOf(text: String, patterns: List<Regex>): Pair<Int, Int>? {
+        for (pattern in patterns) {
+            val match = pattern.find(text) ?: continue
+            val major = match.groupValues[1].toIntOrNull() ?: continue
+            val minor = match.groupValues[2].toIntOrNull() ?: continue
+            return major to minor
+        }
+        return null
     }
 
     private fun JsonObject.text(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull

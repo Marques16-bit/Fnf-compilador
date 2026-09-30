@@ -11,7 +11,10 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -41,22 +44,35 @@ sealed interface BuildSource {
     data class Repository(val repo: String, val ref: String) : BuildSource
 }
 
+private fun defaultClient() = HttpClient {
+    expectSuccess = false
+    install(HttpTimeout) {
+        requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+        socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+        connectTimeoutMillis = 30_000
+    }
+}
+
 class GitHubBuilder(
     private val config: BuildConfig,
-    private val log: (String) -> Unit
+    private val log: (String) -> Unit,
+    private val client: HttpClient = defaultClient()
 ) {
-    private val client = HttpClient {
-        expectSuccess = false
-        install(HttpTimeout) {
-            requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
-            socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
-            connectTimeoutMillis = 30_000
-        }
-    }
+    private var runId: Long? = null
 
     fun close() = client.close()
 
     companion object {
+        private const val API_ATTEMPTS = 4
+        private const val BACKOFF_MS = 1_000L
+        private const val MAX_BACKOFF_MS = 30_000L
+        private const val FIND_ATTEMPTS = 20
+        private const val RESUME_FIND_ATTEMPTS = 3
+        private const val FIND_DELAY_MS = 4_000L
+        private const val POLL_DELAY_MS = 6_000L
+        private const val MAX_POLLS = 3_600
+        private const val MAX_POLL_FAILURES = 20
+
         fun newTag(): String = "mod-" + Random.nextLong().toULong().toString(16)
     }
 
@@ -68,7 +84,13 @@ class GitHubBuilder(
         return BuildOutcome(true, null, asset.text("browser_download_url"), asset.text("name"), asset.long("size") ?: 0L)
     }
 
-    suspend fun build(source: BuildSource, target: BuildTarget, profile: BuildProfile, tag: String = newTag()): BuildOutcome {
+    suspend fun build(
+        source: BuildSource,
+        target: BuildTarget,
+        profile: BuildProfile,
+        tag: String = newTag(),
+        onDispatched: (String) -> Unit = {}
+    ): BuildOutcome {
         log("Creating package $tag")
         var response = api(HttpMethod.Post, "/repos/${config.repo}/releases", buildJsonObject {
             put("tag_name", tag)
@@ -107,40 +129,84 @@ class GitHubBuilder(
             })
         }.toString())
         if (response.status.value != 204) throw BuildException(explain(response))
+        onDispatched(tag)
+        return track(tag, target, FIND_ATTEMPTS)
+    }
 
-        val title = "Build ${target.id} $tag"
-        var run: JsonObject? = null
-        repeat(20) {
-            if (run != null) return@repeat
-            delay(4_000)
-            val list = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs?event=workflow_dispatch&per_page=20")
-            if (list.status.value == 200) {
-                run = json(list).obj().array("workflow_runs")
-                    .map { it.jsonObject }
-                    .firstOrNull { it.text("display_title") == title || it.text("name") == title }
+    suspend fun resume(tag: String, target: BuildTarget): BuildOutcome {
+        log("Reconnecting to build $tag")
+        return track(tag, target, RESUME_FIND_ATTEMPTS)
+    }
+
+    suspend fun cancelRun() {
+        val id = runId ?: return
+        withContext(NonCancellable) {
+            try {
+                api(HttpMethod.Post, "/repos/${config.repo}/actions/runs/$id/cancel")
+                log("Cancellation requested")
+            } catch (e: Exception) {
+                log("Could not cancel the run: ${e.message}")
             }
         }
-        var current = run ?: throw BuildException("GitHub did not start the build in time. Check the Actions tab")
+    }
+
+    private suspend fun track(tag: String, target: BuildTarget, findAttempts: Int): BuildOutcome {
+        val title = "Build ${target.id} $tag"
+        var found: JsonObject? = null
+        var attempt = 0
+        while (found == null && attempt < findAttempts) {
+            attempt++
+            if (attempt > 1 || findAttempts == FIND_ATTEMPTS) delay(FIND_DELAY_MS)
+            found = safely {
+                val list = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs?event=workflow_dispatch&per_page=50")
+                if (list.status.value == 200) {
+                    json(list).obj().array("workflow_runs").map { it.jsonObject }
+                        .firstOrNull { it.text("display_title") == title || it.text("name") == title }
+                } else {
+                    null
+                }
+            }
+        }
+        var current = found ?: throw BuildException("GitHub did not start the build in time. Check the Actions tab")
+        runId = current.long("id")
         log("Build #${current.long("run_number")} started")
 
         val seen = HashSet<String>()
+        var failures = 0
+        var polls = 0
         while (current.text("status") != "completed") {
-            delay(6_000)
-            val poll = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${current.long("id")}")
-            if (poll.status.value != 200) continue
-            current = json(poll).obj()
-            val jobs = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${current.long("id")}/jobs")
-            if (jobs.status.value == 200) {
-                for (job in json(jobs).obj().array("jobs")) {
-                    val jobObj = job.jsonObject
-                    for (step in jobObj.array("steps")) {
-                        val s = step.jsonObject
-                        val state = s.text("conclusion") ?: s.text("status") ?: continue
-                        if (state == "queued") continue
-                        val key = "${jobObj.long("id")}:${s.long("number")}:$state"
-                        if (seen.add(key)) log("${s.text("name")}: ${describe(state)}")
+            if (++polls > MAX_POLLS) throw BuildException("The build ran for more than six hours. Check the Actions tab")
+            delay(POLL_DELAY_MS)
+            val latest = current
+            val update = safely {
+                val poll = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${latest.long("id")}")
+                if (poll.status.value != 200) return@safely null
+                val fresh = json(poll).obj()
+                val jobs = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${fresh.long("id")}/jobs")
+                if (jobs.status.value == 200) {
+                    for (job in json(jobs).obj().array("jobs")) {
+                        val jobObj = job.jsonObject
+                        for (step in jobObj.array("steps")) {
+                            val s = step.jsonObject
+                            val state = s.text("conclusion") ?: s.text("status") ?: continue
+                            if (state == "queued") continue
+                            val key = "${jobObj.long("id")}:${s.long("number")}:$state"
+                            if (seen.add(key)) log("${s.text("name")}: ${describe(state)}")
+                        }
                     }
                 }
+                fresh
+            }
+            if (update == null) {
+                failures++
+                if (failures == 1) log("Connection problem, retrying")
+                if (failures >= MAX_POLL_FAILURES) {
+                    throw BuildException("Lost the connection to GitHub. The build keeps running, open the app again to reconnect")
+                }
+            } else {
+                if (failures > 0) log("Connection restored")
+                failures = 0
+                current = update
             }
         }
         return finish(current, tag)
@@ -151,42 +217,67 @@ class GitHubBuilder(
         val conclusion = run.text("conclusion") ?: "unknown"
         if (conclusion == "success") {
             log("Build finished successfully")
-            val release = api(HttpMethod.Get, "/repos/${config.repo}/releases/tags/$tag")
-            if (release.status.value == 200) {
-                val asset = json(release).obj().array("assets").map { it.jsonObject }
-                    .firstOrNull { it.text("name")?.startsWith("result-") == true }
-                if (asset != null) {
-                    return BuildOutcome(true, runUrl, asset.text("browser_download_url"), asset.text("name"), asset.long("size") ?: 0L)
-                }
-            }
+            val outcome = safely { lookup(tag) }
+            if (outcome != null) return outcome.copy(runUrl = runUrl)
             log("The build passed but no result file was found in the release")
             return BuildOutcome(true, runUrl, null, null, 0L)
         }
         log("Build ended as: ${describe(conclusion)}")
-        val jobs = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${run.long("id")}/jobs")
-        if (jobs.status.value == 200) {
-            val failed = json(jobs).obj().array("jobs").map { it.jsonObject }.firstOrNull { it.text("conclusion") == "failure" }
-            if (failed != null) {
-                val logs = api(HttpMethod.Get, "/repos/${config.repo}/actions/jobs/${failed.long("id")}/logs")
-                if (logs.status.value in 200..299) {
-                    log("End of the log:\n" + logs.bodyAsText().lines().takeLast(40).joinToString("\n"))
-                } else {
-                    log("Open the build page to read the full log")
+        safely {
+            val jobs = api(HttpMethod.Get, "/repos/${config.repo}/actions/runs/${run.long("id")}/jobs")
+            if (jobs.status.value == 200) {
+                val failed = json(jobs).obj().array("jobs").map { it.jsonObject }.firstOrNull { it.text("conclusion") == "failure" }
+                if (failed != null) {
+                    val logs = api(HttpMethod.Get, "/repos/${config.repo}/actions/jobs/${failed.long("id")}/logs")
+                    if (logs.status.value in 200..299) {
+                        log("End of the log:\n" + logs.bodyAsText().lines().takeLast(40).joinToString("\n"))
+                    } else {
+                        log("Open the build page to read the full log")
+                    }
                 }
             }
+            Unit
         }
         return BuildOutcome(false, runUrl, null, null, 0L)
     }
 
-    private suspend fun api(method: HttpMethod, path: String, body: String? = null): HttpResponse =
-        client.request("https://api.github.com$path") {
-            this.method = method
-            authorize()
-            if (body != null) {
-                contentType(ContentType.Application.Json)
-                setBody(body)
+    private suspend fun <T> safely(block: suspend () -> T?): T? =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+
+    private suspend fun api(method: HttpMethod, path: String, body: String? = null): HttpResponse {
+        val attempts = if (method == HttpMethod.Get) API_ATTEMPTS else 1
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                val response = client.request("https://api.github.com$path") {
+                    this.method = method
+                    authorize()
+                    if (body != null) {
+                        contentType(ContentType.Application.Json)
+                        setBody(body)
+                    }
+                }
+                val status = response.status.value
+                val limited = status == 403 && response.headers["X-RateLimit-Remaining"] == "0"
+                val retryable = status >= 500 || status == 429 || limited
+                if (!retryable || attempt >= attempts) return response
+                val wait = response.headers["Retry-After"]?.toLongOrNull()?.times(1000) ?: (BACKOFF_MS shl (attempt - 1))
+                delay(minOf(wait, MAX_BACKOFF_MS))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attempt >= attempts) throw e
+                delay(minOf(BACKOFF_MS shl (attempt - 1), MAX_BACKOFF_MS))
             }
         }
+    }
 
     private fun io.ktor.client.request.HttpRequestBuilder.authorize() {
         header("Accept", "application/vnd.github+json")

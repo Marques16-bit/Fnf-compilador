@@ -6,7 +6,9 @@ import com.ports.fnfcompiler.core.RepoRef
 import com.ports.fnfcompiler.core.SourceFiles
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import com.ports.fnfcompiler.core.ArchiveException
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -85,6 +87,54 @@ class PsychEngineTest {
         assertTrue(result.profile.defines.contains("NO_FEATURE_MOBILE_IAP"))
         assertTrue(result.warnings.any { it.contains("ASTC") })
         assertTrue(result.warnings.none { it.contains("touch controls") })
+    }
+
+    private val mario = MapSource(
+        mapOf(
+            "Project.xml" to """<project><app title="Friday Night Funkin': Mario's Madness" /><define name="LUA_ALLOWED" if="windows" /><haxelib name="flixel" /><haxelib name="hscript" /></project>""",
+            "complations_preset.bat" to "haxelib set flixel 5.3.1\nhaxelib set lime 8.0.2\n",
+            "source/Transparency.hx" to "@:headerCode(\"#include <windows.h>\") class Transparency {}",
+            "source/backend/Native.hx" to "#if windows @:headerCode(\"#include <windows.h>\") #end class Native {}"
+        )
+    )
+
+    @Test
+    fun detectsMarioMadnessWithLegacyToolchain() = runTest {
+        val result = Analyzer.analyze(mario, BuildTarget.WINDOWS)
+        assertEquals("Mario's Madness", result.engine.label)
+        assertEquals("Setup script", result.libs.label)
+        assertEquals("4.2.5", result.profile.haxe)
+        assertTrue(!result.profile.modern)
+        assertTrue(result.profile.defines.isEmpty())
+        assertTrue(result.warnings.none { it.contains("Windows API") })
+        assertTrue(result.warnings.none { it.contains("only on Windows") })
+    }
+
+    @Test
+    fun warnsWhenWindowsOnlySourceTargetsAnotherPlatform() = runTest {
+        val result = Analyzer.analyze(mario, BuildTarget.LINUX)
+        val warning = result.warnings.firstOrNull { it.contains("Windows API") }
+        assertTrue(warning != null)
+        assertTrue(warning.contains("Transparency.hx"))
+        assertTrue(!warning.contains("Native.hx"))
+        assertTrue(result.warnings.any { it.contains("only on Windows") })
+        assertTrue(!result.code.ok)
+    }
+
+    @Test
+    fun doesNotFlagFeaturesThatSeveralPlatformsShare() = runTest {
+        val shared = MapSource(
+            mapOf("Project.xml" to """<project><define name="VIDEOS_ALLOWED" if="windows || linux || android || mac" unless="32bits"/></project>""")
+        )
+        assertTrue(Analyzer.analyze(shared, BuildTarget.LINUX).warnings.none { it.contains("only on Windows") })
+    }
+
+    @Test
+    fun acceptsDotsInFileNamesButRejectsTraversal() = runTest {
+        val dotted = MapSource(mapOf("Project.xml" to "<project></project>", "assets/songs/Song...ogg" to ""))
+        assertTrue(Analyzer.analyze(dotted, BuildTarget.WINDOWS).hasProject)
+        val hostile = MapSource(mapOf("Project.xml" to "<project></project>", "../evil.txt" to ""))
+        assertFailsWith<ArchiveException> { Analyzer.analyze(hostile, BuildTarget.WINDOWS) }
     }
 
     @Test

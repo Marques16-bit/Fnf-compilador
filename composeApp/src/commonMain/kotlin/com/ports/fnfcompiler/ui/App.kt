@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ports.fnfcompiler.core.BuildTarget
 import com.ports.fnfcompiler.core.SettingsStore
+import com.ports.fnfcompiler.platform.installCrashHandler
 import io.github.vinceglb.filekit.compose.rememberFilePickerLauncher
 import io.github.vinceglb.filekit.core.PickerMode
 import io.github.vinceglb.filekit.core.PickerType
@@ -52,7 +53,10 @@ fun App() {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val scope = rememberCoroutineScope()
             val uriHandler = LocalUriHandler.current
-            val model = remember { CompilerModel(scope, SettingsStore()) { uriHandler.openUri(it) } }
+            val model = remember {
+                installCrashHandler()
+                CompilerModel(scope, SettingsStore()) { uriHandler.openUri(it) }
+            }
             HomeScreen(model)
         }
     }
@@ -94,6 +98,33 @@ private fun HomeScreen(model: CompilerModel) {
                 }
             }
 
+            model.lastCrash?.let { details ->
+                Panel {
+                    SectionTitle("The app closed unexpectedly last time", "Nothing was lost. Your settings and any running build are kept.")
+                    Collapsible("Details") {
+                        SelectionContainer {
+                            Text(details, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = muted)
+                        }
+                    }
+                    OutlinedButton(onClick = { model.dismissCrash() }) { Text("Dismiss") }
+                }
+            }
+
+            model.pending?.let { waiting ->
+                if (!model.busy) {
+                    Panel {
+                        SectionTitle("A build is still being tracked", "${waiting.target.label} build ${waiting.tag}")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { model.resume() }, enabled = model.automatic) { Text("Resume") }
+                            OutlinedButton(onClick = { model.dismissPending() }) { Text("Forget it") }
+                        }
+                        if (!model.automatic) {
+                            Text("Add your GitHub token in Advanced settings to resume.", fontSize = 13.sp, color = muted)
+                        }
+                    }
+                }
+            }
+
             Panel {
                 SectionTitle("Source", "A public GitHub repository or a ZIP of the mod")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -113,6 +144,7 @@ private fun HomeScreen(model: CompilerModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.repoUrl = EXAMPLE_URL }, enabled = !model.busy) { Text("Psych Engine") }
                         TextButton(onClick = { model.repoUrl = VSLICE_URL }, enabled = !model.busy) { Text("V-Slice") }
+                        TextButton(onClick = { model.repoUrl = MARIO_URL }, enabled = !model.busy) { Text("Mario's Madness") }
                     }
                 } else {
                     OutlinedButton(
@@ -155,6 +187,9 @@ private fun HomeScreen(model: CompilerModel) {
                 fontSize = 13.sp,
                 color = muted
             )
+            if (model.busy) {
+                OutlinedButton(onClick = { model.cancel() }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+            }
             TextButton(onClick = { model.check() }, enabled = !model.busy) { Text("Only check the source") }
 
             if (model.busy || model.stage > 0 || model.status.isNotEmpty()) {
