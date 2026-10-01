@@ -115,3 +115,4 @@ jobs:
         with:
           name: FnfCompiler-ios-ipa
           path: iosApp/FnfCompiler.ipa
+          compression-level: 0
